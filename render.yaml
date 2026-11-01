@@ -1,0 +1,71 @@
+# Render Blueprint —— AIStudio2API 新加坡双账号
+# 用法：Render 控制台 → New → Blueprint → 选本仓库 → Apply
+# 说明：plan 用 standard(1c-2G)；想省钱可改 starter(512MB)，但两账号各跑一套 WAA 运行时，512MB 有 OOM 风险
+services:
+  - type: web
+    name: a2a
+    runtime: docker
+    region: singapore
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: false
+    disk:
+      name: a2a-data
+      mountPath: /var/data
+      sizeGB: 2
+    envVars:
+      # ---- 必须自己填（sync:false = 控制台里填，不进代码库）----
+      - key: PROXY_API_KEY
+        sync: false          # 手机端 RikkaHub 用的那个 key（沿用旧值即可）
+      - key: ADMIN_PASSWORD
+        sync: false
+      # ---- 基础 ----
+      - key: LISTEN_ADDR
+        value: 0.0.0.0:10000
+      - key: AISTUDIO_AUTH_STATES
+        value: auth
+      - key: TZ
+        value: Asia/Singapore
+      - key: ADMIN_AUTH_ENABLED
+        value: "true"
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: AUTO_START
+        value: "true"
+      # ---- 双账号调度 ----
+      - key: WARM_WORKER_LIMIT
+        value: "2"
+      - key: WARM_STARTUP_CONCURRENCY
+        value: "2"
+      - key: MAX_ACTIVE_WORKERS
+        value: "4"
+      - key: PER_ACCOUNT_CONCURRENCY
+        value: "2"
+      - key: ROUTING_STRATEGY
+        value: round-robin
+      # ---- 上游通道 ----
+      - key: UPSTREAM_CHANNELS
+        value: build,playground
+      - key: MODEL_CHANNELS
+        value: gemini-4-argon:playground
+      - key: WAA_BACKEND
+        value: go
+      - key: TEMPORARY_CHAT
+        value: "true"
+      - key: MEDIA_OUTPUT
+        value: inline
+      - key: BUILD_NATIVE_NONSTREAM
+        value: "true"
+      - key: INIT_TIMEOUT
+        value: 5m0s
+      - key: REQUEST_TIMEOUT
+        value: 30m0s
+      # ---- 日志（落持久盘）----
+      - key: LOG_FILE
+        value: "true"
+      - key: LOG_MAX_TOTAL_MB
+        value: "200"
+      - key: REQUEST_BODY_LOG
+        value: "false"

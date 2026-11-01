@@ -1,0 +1,4 @@
+# 统一 LF，避免 shell 脚本被 CRLF 打断（Windows 上克隆会加 \r）
+* text=auto eol=lf
+*.sh text eol=lf
+*.gz binary
