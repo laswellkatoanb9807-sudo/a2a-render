@@ -65,7 +65,7 @@ RUN set -eux; \
     CGO_LDFLAGS=-L/opt/spidermonkey/lib \
     go build -p 2 -trimpath -ldflags="-s -w" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
-    file /out/aistudio2api
+    ls -lh /out/aistudio2api
 
 # ---------- 运行时镜像（与上游 Dockerfile 一致用 debian:bookworm-slim） ----------
 FROM debian:bookworm-slim
