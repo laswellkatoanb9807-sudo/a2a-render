@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Zig：用 musl 目标静态链接（与上游 CI 一致）
 RUN set -eux; \
     curl -fsSL "https://ziglang.org/download/${ZIG}/zig-$(uname -m)-linux-${ZIG}.tar.xz" \
-      | tar -xJ -C /opt; \
+      | tar -xJ --no-same-owner -C /opt; \
     mv /opt/zig-* /opt/zig; \
     /opt/zig/zig version
 
@@ -30,7 +30,7 @@ RUN set -eux; \
 RUN set -eux; \
     mkdir -p /opt/spidermonkey; \
     curl -fsSL "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64.tar.gz" \
-      | tar -xz -C /opt/spidermonkey; \
+      | tar -xz --no-same-owner -C /opt/spidermonkey; \
     ls /opt/spidermonkey/lib
 
 WORKDIR /src
