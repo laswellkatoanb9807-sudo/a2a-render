@@ -58,7 +58,7 @@ RUN test -f internal/webui/dist/index.html
 RUN set -eux; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
     CGO_CXXFLAGS=-I/opt/spidermonkey/include \
-    CGO_LDFLAGS=-L/opt/spidermonkey/lib \
+    CGO_LDFLAGS="-L/opt/spidermonkey/lib -Wl,--defsym=__isoc23_strtol=strtol -Wl,--defsym=__isoc23_strtoul=strtoul -Wl,--defsym=__isoc23_strtoll=strtoll -Wl,--defsym=__isoc23_strtoull=strtoull -Wl,--defsym=__isoc23_sscanf=sscanf -Wl,--defsym=__isoc23_vsscanf=vsscanf -Wl,--defsym=__isoc23_fscanf=fscanf" \
     go build -p 2 -trimpath -ldflags="-s -w" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
     file /out/aistudio2api
