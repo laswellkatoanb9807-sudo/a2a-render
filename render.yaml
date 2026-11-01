@@ -21,6 +21,8 @@ services:
         sync: false          # 手机端 RikkaHub 用的那个 key（沿用旧值即可）
       - key: ADMIN_PASSWORD
         sync: false
+      - key: TUNNEL_TOKEN
+        sync: false          # Cloudflare 隧道 a2a-render 的 token（出站连 CF，绕开 error 1000）
       # ---- 基础 ----
       - key: LISTEN_ADDR
         value: 0.0.0.0:10000

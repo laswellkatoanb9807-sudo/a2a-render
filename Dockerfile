@@ -1,9 +1,19 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.2.14（cloud-patches 版）Render 镜像
-# 校验后解压，避免把 49MB 裸二进制塞进 Git；gz 哈希与 lifecycle 档案 §4 台账一致
+# AIStudio2API v0.2.14（cloud-patches 版）+ cloudflared 出站隧道
+# 二进制走「校验后解压」，避免把 49MB 裸文件塞进 Git
 FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata curl
+
+# cloudflared 版本基线 ≥2026.10.2（eMudhra 中间证书事件后 CF 强制），此处钉 2026.10.7 + sha256
+ARG CLOUDFLARED_VERSION=2026.10.7
+ARG CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+RUN set -eux; \
+    curl -fsSL -o /usr/local/bin/cloudflared \
+      "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64"; \
+    echo "${CLOUDFLARED_SHA256}  /usr/local/bin/cloudflared" | sha256sum -c -; \
+    chmod 0755 /usr/local/bin/cloudflared; \
+    cloudflared --version
 
 ENV TZ=Asia/Singapore \
     LISTEN_ADDR=0.0.0.0:10000 \
