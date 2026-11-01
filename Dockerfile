@@ -7,7 +7,8 @@
 #   - 补丁文件仅 7.5KB，随仓库走，永远同步
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS build
+# ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
 ARG UPSTREAM_TAG=v0.2.18
@@ -15,9 +16,8 @@ ARG ZIG=0.16.0
 ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      xz-utils git ca-certificates curl nodejs npm \
-    && rm -rf /var/lib/apt/lists/* \
-    && node --version && npm --version
+      xz-utils git ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Zig：用 musl 目标静态链接（与上游 CI 一致）
 RUN set -eux; \
@@ -45,6 +45,17 @@ RUN git apply --check /tmp/cloud-patches.diff \
  && git apply /tmp/cloud-patches.diff \
  && grep -c "retryBeforeOutput" internal/aistudio/generate.go
 
+# ---------- 阶段 2：前端产物（独立 Node 22 阶段，与上游 Dockerfile 一致） ----------
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
+WORKDIR /src/web
+COPY --from=src /src/web/package.json /src/web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY --from=src /src/web/ ./
+RUN npx vp build && test -f /src/internal/webui/dist/index.html
+
+# ---------- 阶段 3：CGO + SpiderMonkey 静态编译 ----------
+FROM src AS build
+
 # 依赖（GOPROXY 走国内镜像更快，失败回落官方）
 ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct \
     GOSUMDB=off \
@@ -53,9 +64,8 @@ ENV GOPROXY=https://goproxy.cn,https://proxy.golang.org,direct \
 RUN go mod download
 
 # 前端产物：上游仓库不含 internal/webui/dist（//go:embed），必须自己构建
-RUN set -eux; \
-    cd web && npm ci --no-audit --no-fund && npx vp build; \
-    test -f internal/webui/dist/index.html
+COPY --from=web /src/internal/webui/dist internal/webui/dist
+RUN test -f internal/webui/dist/index.html
 
 RUN set -eux; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
