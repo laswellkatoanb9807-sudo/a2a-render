@@ -9,3 +9,4 @@ seeds/
 # 只允许 artifacts 下这一个构建产物
 artifacts/*
 !artifacts/aistudio2api-linux-amd64-v0214-cloud-patches.gz
+verify-remote.sh
