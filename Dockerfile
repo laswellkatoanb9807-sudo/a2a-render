@@ -41,8 +41,8 @@ RUN git clone --depth 1 --branch "${UPSTREAM_TAG}" "${UPSTREAM_REPO}" . \
 
 # 打入云端补丁（输出前重发）
 COPY patches/cloud-patches.diff /tmp/cloud-patches.diff
-RUN patch -p1 --dry-run < /tmp/cloud-patches.diff \
- && patch -p1 < /tmp/cloud-patches.diff \
+RUN git apply --check /tmp/cloud-patches.diff \
+ && git apply /tmp/cloud-patches.diff \
  && grep -c "retryBeforeOutput" internal/aistudio/generate.go
 
 # 依赖（GOPROXY 走国内镜像更快，失败回落官方）
