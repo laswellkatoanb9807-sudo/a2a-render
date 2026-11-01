@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.2.18 + 云端补丁（输出前重发）· Render 自建镜像
+# AIStudio2API v0.2.18 + 云端补丁（输出前重发 + 换行归一化）· Render 自建镜像
 #
 # 设计要点（2026-11-01 定案）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
 #   - 改为构建时从上游源码编译：拉 v0.2.18 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
-#   - 补丁文件仅 7.5KB，随仓库走，永远同步
+#   - 补丁文件仅 13KB（文本），随仓库走，永远同步
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
 # ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
@@ -27,11 +27,12 @@ WORKDIR /src
 RUN git clone --depth 1 --branch "${UPSTREAM_TAG}" "${UPSTREAM_REPO}" . \
     && git log --oneline -1
 
-# 打入云端补丁（输出前重发）
+# 打入云端补丁：输出前重发 + CRLF 全链路归一化（补丁不落地即构建失败，别让它悄悄跳过）
 COPY patches/cloud-patches.diff /tmp/cloud-patches.diff
 RUN git apply --check /tmp/cloud-patches.diff \
  && git apply /tmp/cloud-patches.diff \
- && grep -c "retryBeforeOutput" internal/aistudio/generate.go
+ && grep -c "retryBeforeOutput" internal/aistudio/generate.go \
+ && grep -c "normalizePromptLineEndings" internal/aistudio/service.go
 
 # ---------- 阶段 2：前端产物（独立 Node 22 阶段，与上游 Dockerfile 一致） ----------
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
@@ -60,12 +61,15 @@ RUN set -eux; \
     gcc -O2 -c /tmp/isoc23.c -o /tmp/isoc23.o; \
     ar rcs /opt/spidermonkey/lib/libjs_static.a /tmp/isoc23.o; \
     ar rcs /opt/spidermonkey/lib/libjsrust.a /tmp/isoc23.o; \
+    VERSION="$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)"; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
     CGO_CXXFLAGS=-I/opt/spidermonkey/include \
     CGO_LDFLAGS=-L/opt/spidermonkey/lib \
-    go build -p 2 -trimpath -ldflags="-s -w" \
+    go build -p 2 -trimpath \
+      -ldflags="-s -w -X github.com/Mag1cFall/AIStudio2API/internal/app.version=${VERSION}-cloud -X github.com/Mag1cFall/AIStudio2API/internal/app.managedBy=render-docker" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
-    ls -lh /out/aistudio2api
+    ls -lh /out/aistudio2api; \
+    grep -a -c "render-docker" /out/aistudio2api
 
 # ---------- 运行时镜像（与上游 Dockerfile 一致用 debian:bookworm-slim） ----------
 FROM debian:bookworm-slim
