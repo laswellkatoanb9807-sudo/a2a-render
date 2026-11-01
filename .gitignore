@@ -6,7 +6,6 @@ runtime/
 seeds/
 *.log
 
-# 只允许 artifacts 下这一个构建产物
-artifacts/*
-!artifacts/aistudio2api-linux-amd64-v0214-cloud-patches.gz
+# 二进制不再入库：Render 构建时从上游源码编译（见 Dockerfile）
+artifacts/
 verify-remote.sh

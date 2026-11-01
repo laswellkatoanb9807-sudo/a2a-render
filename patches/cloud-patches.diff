@@ -1,0 +1,175 @@
+diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
+index 92d85d6..2e198da 100644
+--- a/internal/aistudio/generate.go
++++ b/internal/aistudio/generate.go
+@@ -7,6 +7,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"io"
++	"log/slog"
+ 	"regexp"
+ 	"slices"
+ 	"strconv"
+@@ -814,13 +815,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 	wireRequest.Config.StopSequences = nil
+ 	var response *RPCResponse
+ 	var decodeStream func(io.Reader, func(Event) error) error
+-	switch {
+-	case entry.model.Capabilities["assistant_route"]:
+-		response, decodeStream, err = c.sendAssistant(ctx, wireRequest, entry)
+-	case build:
+-		response, decodeStream, err = c.sendBuild(ctx, wireRequest, entry)
+-	default:
+-		response, decodeStream, err = c.sendPlayground(ctx, wireRequest, entry)
++	response, decodeStream, err = c.sendStreamRequest(ctx, wireRequest, entry, build)
++	// 上游同步拒绝时（非流式 Build 调用）同样回退：此时尚未输出任何内容，重发是安全的
++	if err != nil && isThoughtSignatureError(err) {
++		response, decodeStream, err = c.retryWithoutThoughtSignatures(ctx, wireRequest, entry, build, err)
+ 	}
+ 	if err != nil {
+ 		return nil, err
+@@ -854,6 +852,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 		var finish *Event
+ 		var output Output
+ 		matchedStopSequence := ""
++		// 正文是否已开始输出：只有尚未输出任何正文时才能安全地重发请求
++		emitted := false
++		// 是否已经为「输出前拒绝」重发过一次，避免上游持续拒绝时反复重试
++		retried := false
+ 		emitEvent := func(event Event) error {
+ 			switch event.Kind {
+ 			case EventUsage:
+@@ -875,11 +877,26 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 						TurnToken: event.TurnToken, DebugInfo: event.DebugInfo, ResponseID: event.ResponseID, FrameUsage: event.FrameUsage, FinishFrame: event.FinishFrame,
+ 					}
+ 				}
++				if event.Kind != EventError && event.Kind != EventThoughtSignature {
++					emitted = true
++				}
+ 				return send(event)
+ 			}
+ 		}
+ 		emit := stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
+ 		err := decodeStream(observeStreamActivity(ctx, response.Body), emit)
++		// 上游在输出任何正文之前拒绝时（历史思考签名校验失败、通道级 400/404/500 等），
++		// 客户端拿不到 finishReason，会报 "stream ended without a finish reason"。
++		// 此时重发一次，对用户透明；重发仍失败则保留原始错误。
++		// 三道锁：仅在尚未输出正文时、仅重发一次、客户端取消时不重发。
++		if err != nil && !emitted && ctx.Err() == nil && !retried {
++			retried = true
++			if retryResponse, retryDecode, retryErr := c.retryBeforeOutput(ctx, wireRequest, entry, build, err); retryErr == nil {
++				_ = response.Body.Close()
++				response, decodeStream = retryResponse, retryDecode
++				err = decodeStream(observeStreamActivity(ctx, response.Body), emit)
++			}
++		}
+ 		if errors.Is(err, errStopSequenceMatched) {
+ 			_ = response.Body.Close()
+ 			finishAtStopSequence(ctx, request, output, stopTokenCount, matchedStopSequence, send)
+@@ -981,6 +998,106 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
+ }
+ 
+ // truncateRequest 按权威计数删除最早的完整对话轮次，倍增定位后二分查找最少的删除轮数
++// sendStreamRequest 按通道路由发送生成请求，返回响应与流解码函数
++func (c *Client) sendStreamRequest(ctx context.Context, request GenerateRequest, entry modelEntry, build bool) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
++	switch {
++	case entry.model.Capabilities["assistant_route"]:
++		return c.sendAssistant(ctx, request, entry)
++	case build:
++		return c.sendBuild(ctx, request, entry)
++	default:
++		return c.sendPlayground(ctx, request, entry)
++	}
++}
++
++// retryBeforeOutput 在尚未输出正文时重发一次生成请求。
++// 若上游因历史思考签名拒绝，则剥离签名后重发（沿用既有语义）；其余情况原样重发。
++// 重发本身失败时保留原始错误，不静默吞掉上游新增的错误。
++func (c *Client) retryBeforeOutput(
++	ctx context.Context,
++	request GenerateRequest,
++	entry modelEntry,
++	build bool,
++	cause error,
++) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
++	retryRequest, reason := request, "上游在输出正文前拒绝，已原样重发一次"
++	if isThoughtSignatureError(cause) {
++		if stripped, ok := withoutThoughtSignatures(request); ok {
++			retryRequest, reason = stripped, "历史思考签名被上游拒绝，已剥离签名重试"
++		}
++	}
++	response, decodeStream, err := c.sendStreamRequest(ctx, retryRequest, entry, build)
++	if err != nil {
++		slog.Warn("输出前重发请求失败", "model", entry.model.ID, "error", err.Error())
++		return nil, nil, errors.Join(cause, err)
++	}
++	slog.Warn(reason, "model", entry.model.ID, "error", cause.Error())
++	return response, decodeStream, nil
++}
++
++// retryWithoutThoughtSignatures 剥离历史签名后重发一次；无法剥离时原样返回原错误
++func (c *Client) retryWithoutThoughtSignatures(
++	ctx context.Context,
++	request GenerateRequest,
++	entry modelEntry,
++	build bool,
++	cause error,
++) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
++	stripped, ok := withoutThoughtSignatures(request)
++	if !ok {
++		return nil, nil, cause
++	}
++	response, decodeStream, err := c.sendStreamRequest(ctx, stripped, entry, build)
++	if err != nil {
++		return nil, nil, errors.Join(cause, err)
++	}
++	slog.Warn("历史思考签名被上游拒绝，已剥离签名重试", "model", entry.model.ID, "error", cause.Error())
++	return response, decodeStream, nil
++}
++
++// isThoughtSignatureError 判断上游是否因历史思考签名校验失败而拒绝请求
++// 上游两种写法都要覆盖：AI Studio Web 用 "thought signature"，官方 API 用 "thought_signature"
++func isThoughtSignatureError(err error) bool {
++	if err == nil {
++		return false
++	}
++	message := strings.ToLower(err.Error())
++	return strings.Contains(message, "thought signature") || strings.Contains(message, "thought_signature")
++}
++
++// withoutThoughtSignatures 返回剥离全部历史思考签名的请求副本，没有签名时返回 false
++// 注意：仅承载签名的独立 Part 剥离后会变成空 Part（无法编码），必须整段删除
++func withoutThoughtSignatures(request GenerateRequest) (GenerateRequest, bool) {
++	found := false
++	contents := make([]Content, len(request.Contents))
++	for index, content := range request.Contents {
++		parts := make([]Part, 0, len(content.Parts))
++		for _, part := range content.Parts {
++			if part.ThoughtSignature != "" {
++				part.ThoughtSignature = ""
++				found = true
++			}
++			if part.FunctionCall != nil && part.FunctionCall.ThoughtSignature != "" {
++				call := *part.FunctionCall
++				call.ThoughtSignature = ""
++				part.FunctionCall = &call
++				found = true
++			}
++			// 剥离后不再承载任何内容的 Part 直接丢弃，否则编码会因“part 必须且只能设置一种内容”失败
++			if part.empty() {
++				continue
++			}
++			parts = append(parts, part)
++		}
++		content.Parts = parts
++		contents[index] = content
++	}
++	if !found {
++		return request, false
++	}
++	request.Contents = contents
++	return request, true
++}
+ func (c *Client) truncateRequest(ctx context.Context, request GenerateRequest, limit int64) (GenerateRequest, error) {
+ 	starts := []int{0}
+ 	for start := 0; ; {

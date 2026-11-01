@@ -53,7 +53,7 @@ services:
       - key: MODEL_CHANNELS
         value: gemini-4-argon:playground
       - key: WAA_BACKEND
-        value: go
+        value: spidermonkey
       - key: TEMPORARY_CHAT
         value: "true"
       - key: MEDIA_OUTPUT
