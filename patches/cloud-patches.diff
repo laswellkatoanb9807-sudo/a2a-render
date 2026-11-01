@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 92d85d6..2e198da 100644
+index 92d85d6..b192da4 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -7,6 +7,7 @@ import (
@@ -10,7 +10,17 @@ index 92d85d6..2e198da 100644
  	"regexp"
  	"slices"
  	"strconv"
-@@ -814,13 +815,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+@@ -758,6 +759,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
+ }
+ 
+ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan Event, error) {
++	// 换行归一化：WAA proof 把 digest 绑定到请求文本，官网 textarea 与服务端双双只认 LF。
++	// 必须在编码请求体与 Build/Playground 分流之前完成，否则 digest 与发往上游的正文会不一致。
++	normalizeGenerateRequestLineEndings(&request)
+ 	lease, leased := AccountLeaseFromContext(ctx)
+ 	build := leased && lease.Channel() == ChannelBuild
+ 	var entry modelEntry
+@@ -814,13 +818,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
  	wireRequest.Config.StopSequences = nil
  	var response *RPCResponse
  	var decodeStream func(io.Reader, func(Event) error) error
@@ -28,7 +38,7 @@ index 92d85d6..2e198da 100644
  	}
  	if err != nil {
  		return nil, err
-@@ -854,6 +852,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+@@ -854,6 +855,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
  		var finish *Event
  		var output Output
  		matchedStopSequence := ""
@@ -39,7 +49,7 @@ index 92d85d6..2e198da 100644
  		emitEvent := func(event Event) error {
  			switch event.Kind {
  			case EventUsage:
-@@ -875,11 +877,26 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+@@ -875,11 +880,26 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
  						TurnToken: event.TurnToken, DebugInfo: event.DebugInfo, ResponseID: event.ResponseID, FrameUsage: event.FrameUsage, FinishFrame: event.FinishFrame,
  					}
  				}
@@ -66,7 +76,7 @@ index 92d85d6..2e198da 100644
  		if errors.Is(err, errStopSequenceMatched) {
  			_ = response.Body.Close()
  			finishAtStopSequence(ctx, request, output, stopTokenCount, matchedStopSequence, send)
-@@ -981,6 +998,106 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
+@@ -981,6 +1001,106 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
  }
  
  // truncateRequest 按权威计数删除最早的完整对话轮次，倍增定位后二分查找最少的删除轮数
@@ -173,3 +183,118 @@ index 92d85d6..2e198da 100644
  func (c *Client) truncateRequest(ctx context.Context, request GenerateRequest, limit int64) (GenerateRequest, error) {
  	starts := []int{0}
  	for start := 0; ; {
+diff --git a/internal/aistudio/lineending_test.go b/internal/aistudio/lineending_test.go
+new file mode 100644
+index 0000000..e1cb72a
+--- /dev/null
++++ b/internal/aistudio/lineending_test.go
+@@ -0,0 +1,45 @@
++package aistudio
++
++import "testing"
++
++// TestNormalizePromptLineEndings 验证 CRLF/CR 统一成 LF，且对纯 LF 文本幂等
++func TestNormalizePromptLineEndings(t *testing.T) {
++	for _, test := range []struct{ name, value, want string }{
++		{"lf", "a\nb", "a\nb"},
++		{"crlf", "a\r\nb", "a\nb"},
++		{"cr", "a\rb", "a\nb"},
++		{"mixed", "a\r\nb\nc\rd", "a\nb\nc\nd"},
++		{"empty", "", ""},
++		{"no newline", "abc", "abc"},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			if got := normalizePromptLineEndings(test.value); got != test.want {
++				t.Fatalf("normalizePromptLineEndings(%q) = %q, want %q", test.value, got, test.want)
++			}
++		})
++	}
++}
++
++// TestNormalizeGenerateRequestLineEndings 验证系统指令与各 Part 文本都被归一化，其余字段不动且幂等
++func TestNormalizeGenerateRequestLineEndings(t *testing.T) {
++	request := GenerateRequest{
++		System:   []string{"规则一\r\n规则二"},
++		Contents: []Content{{Role: RoleUser, Parts: []Part{{Text: "第一行\r\n第二行"}, {Text: "无换行"}}}},
++	}
++	normalizeGenerateRequestLineEndings(&request)
++	if request.System[0] != "规则一\n规则二" {
++		t.Fatalf("system not normalized: %q", request.System[0])
++	}
++	if request.Contents[0].Parts[0].Text != "第一行\n第二行" {
++		t.Fatalf("part text not normalized: %q", request.Contents[0].Parts[0].Text)
++	}
++	if request.Contents[0].Parts[1].Text != "无换行" {
++		t.Fatalf("plain text changed: %q", request.Contents[0].Parts[1].Text)
++	}
++	normalizeGenerateRequestLineEndings(&request)
++	if request.System[0] != "规则一\n规则二" || request.Contents[0].Parts[0].Text != "第一行\n第二行" {
++		t.Fatal("normalization is not idempotent")
++	}
++	// nil 请求不得 panic
++	normalizeGenerateRequestLineEndings(nil)
++}
+diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
+index b8f5d42..c516ef5 100644
+--- a/internal/aistudio/runtime_native.go
++++ b/internal/aistudio/runtime_native.go
+@@ -45,6 +45,17 @@ func NewNativeWorker(ctx context.Context, accountID string, options camoufoxnati
+ 	}, nil
+ }
+ 
++// normalizePromptLineEndings 把 prompt 的换行归一化为 LF，保证 digest、写入与回读三方一致。
++// 官网 textarea 按 Firefox 规则把 CRLF 与 CR 归一为 LF，含 \r 的文本与回读值永远对不上：
++// Camoufox 后端表现为 Proof 超时后 Worker 重建，服务端也会因 digest 失配判 403。归一化对模型语义无损且幂等。
++func normalizePromptLineEndings(prompt string) string {
++	if !strings.Contains(prompt, "\r") {
++		return prompt
++	}
++	prompt = strings.ReplaceAll(prompt, "\r\n", "\n")
++	return strings.ReplaceAll(prompt, "\r", "\n")
++}
++
+ // Prepare 生成 fresh proof 并写入请求指定的 WAA field
+ func (worker *NativeWorker) Prepare(ctx context.Context, request ProtectedRequest) (PreparedProtectedRequest, error) {
+ 	start, end, err := arrayElementSpan(request.Body, request.ProofField-1)
+@@ -65,6 +76,7 @@ func (worker *NativeWorker) Prepare(ctx context.Context, request ProtectedReques
+ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page string) (string, http.Header, error) {
+ 	worker.operationMu.Lock()
+ 	defer worker.operationMu.Unlock()
++	binding = normalizePromptLineEndings(binding)
+ 	worker.setPhase(WorkerBusy)
+ 	digest := sha256.Sum256([]byte(binding))
+ 	proof, err := worker.runtime.Proof(ctx, fmt.Sprintf("%x", digest), page)
+diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
+index e4572e2..e544813 100644
+--- a/internal/aistudio/service.go
++++ b/internal/aistudio/service.go
+@@ -243,6 +243,7 @@ func (t *WorkerProtectedTransport) prepareProtectedRequest(
+ // DoProtectedVideo 写入 Veo fresh proof 后经 Worker 页面发送请求，页面输入框的提示词为视频提示词
+ func (t *WorkerProtectedTransport) DoProtectedVideo(ctx context.Context, request VideoRequest, rpc RPCRequest) (*RPCResponse, error) {
+ 	modelID := strings.TrimPrefix(strings.TrimSpace(request.Model), "models/")
++	request.Prompt = normalizePromptLineEndings(request.Prompt)
+ 	return t.doPrepared(ctx, request.Prompt, request.Prompt, 8, AccountSelection{
+ 		ModelID: modelID, Method: "predictLongRunning", AccountID: strings.TrimSpace(request.AccountID),
+ 	}, rpc)
+@@ -253,6 +254,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+ 	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, AccountSelection{ModelID: request.Model}, rpc)
+ }
+ 
++// normalizeGenerateRequestLineEndings 把生成请求的文本换行归一化为 LF，必须在编码请求体之前调用
++func normalizeGenerateRequestLineEndings(request *GenerateRequest) {
++	if request == nil {
++		return
++	}
++	for index := range request.System {
++		request.System[index] = normalizePromptLineEndings(request.System[index])
++	}
++	for index := range request.Contents {
++		for part := range request.Contents[index].Parts {
++			request.Contents[index].Parts[part].Text = normalizePromptLineEndings(request.Contents[index].Parts[part].Text)
++		}
++	}
++}
++
+ func bindingPrompt(request GenerateRequest) (string, error) {
+ 	if len(request.Contents) == 0 {
+ 		return "", fmt.Errorf("GenerateContent contents 不能为空")
