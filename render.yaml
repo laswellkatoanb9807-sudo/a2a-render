@@ -46,14 +46,14 @@ services:
       - key: PER_ACCOUNT_CONCURRENCY
         value: "2"
       - key: ROUTING_STRATEGY
-        value: round-robin
+        value: fill-first
       # ---- 上游通道 ----
       - key: UPSTREAM_CHANNELS
-        value: build,playground
+        value: playground
       - key: MODEL_CHANNELS
         value: gemini-4-argon:playground
       - key: WAA_BACKEND
-        value: go
+        value: spidermonkey
       - key: TEMPORARY_CHAT
         value: "true"
       - key: MEDIA_OUTPUT
