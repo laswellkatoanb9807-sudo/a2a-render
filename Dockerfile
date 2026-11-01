@@ -56,9 +56,13 @@ COPY --from=web /src/internal/webui/dist internal/webui/dist
 RUN test -f internal/webui/dist/index.html
 
 RUN set -eux; \
+    printf '#include <stdlib.h>\n#include <stdio.h>\n#include <stdarg.h>\nlong __isoc23_strtol(const char *s, char **e, int b){return strtol(s,e,b);}\nunsigned long __isoc23_strtoul(const char *s, char **e, int b){return strtoul(s,e,b);}\nlong long __isoc23_strtoll(const char *s, char **e, int b){return strtoll(s,e,b);}\nunsigned long long __isoc23_strtoull(const char *s, char **e, int b){return strtoull(s,e,b);}\nint __isoc23_sscanf(const char *s, const char *f, ...){va_list a;va_start(a,f);int r=vsscanf(s,f,a);va_end(a);return r;}\n' > /tmp/isoc23.c; \
+    gcc -O2 -c /tmp/isoc23.c -o /tmp/isoc23.o; \
+    ar rcs /opt/spidermonkey/lib/libjs_static.a /tmp/isoc23.o; \
+    ar rcs /opt/spidermonkey/lib/libjsrust.a /tmp/isoc23.o; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
     CGO_CXXFLAGS=-I/opt/spidermonkey/include \
-    CGO_LDFLAGS="-L/opt/spidermonkey/lib -Wl,--defsym=__isoc23_strtol=strtol -Wl,--defsym=__isoc23_strtoul=strtoul -Wl,--defsym=__isoc23_strtoll=strtoll -Wl,--defsym=__isoc23_strtoull=strtoull -Wl,--defsym=__isoc23_sscanf=sscanf -Wl,--defsym=__isoc23_vsscanf=vsscanf -Wl,--defsym=__isoc23_fscanf=fscanf" \
+    CGO_LDFLAGS=-L/opt/spidermonkey/lib \
     go build -p 2 -trimpath -ldflags="-s -w" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
     file /out/aistudio2api
