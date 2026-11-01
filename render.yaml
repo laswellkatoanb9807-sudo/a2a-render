@@ -46,7 +46,7 @@ services:
       - key: PER_ACCOUNT_CONCURRENCY
         value: "2"
       - key: ROUTING_STRATEGY
-        value: round-robin
+        value: fill-first
       # ---- 上游通道 ----
       - key: UPSTREAM_CHANNELS
         value: playground
