@@ -67,13 +67,14 @@ RUN go mod download
 COPY --from=web /src/internal/webui/dist internal/webui/dist
 RUN test -f internal/webui/dist/index.html
 
+# taskset -c 0,1 限制 Zig/Go 只见 2 核（Zig 默认按宿主机 sched_getaffinity 并发 32+ 进程编译 libcxx 导致容器 OOM）
 RUN set -eux; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-    CC="/opt/zig/zig cc -target x86_64-linux-musl" \
-    CXX="/opt/zig/zig c++ -target x86_64-linux-musl" \
+    CC="/opt/zig/zig cc -target x86_64-linux-musl -w" \
+    CXX="/opt/zig/zig c++ -target x86_64-linux-musl -w" \
     CGO_CXXFLAGS=-I/opt/spidermonkey/include \
     CGO_LDFLAGS=-L/opt/spidermonkey/lib \
-    go build -trimpath -tags netgo,osusergo \
+    taskset -c 0,1 go build -p 2 -trimpath -tags netgo,osusergo \
       -ldflags="-s -w -linkmode external -extldflags '-static -Wl,--strip-all'" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
     file /out/aistudio2api
