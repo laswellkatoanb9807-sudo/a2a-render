@@ -12,24 +12,12 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
 ARG UPSTREAM_TAG=v0.2.18
-ARG ZIG=0.16.0
 ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      xz-utils git ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Zig：用 musl 目标静态链接（与上游 CI 一致）
-RUN set -eux; \
-    curl -fsSL "https://ziglang.org/download/${ZIG}/zig-$(uname -m)-linux-${ZIG}.tar.xz" \
-      | tar -xJ --no-same-owner -C /opt; \
-    mv /opt/zig-* /opt/zig; \
-    /opt/zig/zig version
-
-# SpiderMonkey 静态库（WAA 在进程内执行官方 interpreter 所需）
+# SpiderMonkey 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
 RUN set -eux; \
     mkdir -p /opt/spidermonkey; \
-    curl -fsSL "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64.tar.gz" \
+    curl -fsSL "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64-gnu.tar.gz" \
       | tar -xz --no-same-owner -C /opt/spidermonkey; \
     ls /opt/spidermonkey/lib
 
@@ -53,7 +41,7 @@ RUN npm ci --no-audit --no-fund
 COPY --from=src /src/web/ ./
 RUN npx vp build && test -f /src/internal/webui/dist/index.html
 
-# ---------- 阶段 3：CGO + SpiderMonkey 静态编译 ----------
+# ---------- 阶段 3：CGO + SpiderMonkey 编译（与上游 CI checks job 一致） ----------
 FROM src AS build
 
 # 依赖（GOPROXY 走国内镜像更快，失败回落官方）
@@ -67,22 +55,20 @@ RUN go mod download
 COPY --from=web /src/internal/webui/dist internal/webui/dist
 RUN test -f internal/webui/dist/index.html
 
-# taskset -c 0,1 限制 Zig/Go 只见 2 核（Zig 默认按宿主机 sched_getaffinity 并发 32+ 进程编译 libcxx 导致容器 OOM）
 RUN set -eux; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-    CC="/opt/zig/zig cc -target x86_64-linux-musl -w" \
-    CXX="/opt/zig/zig c++ -target x86_64-linux-musl -w" \
     CGO_CXXFLAGS=-I/opt/spidermonkey/include \
     CGO_LDFLAGS=-L/opt/spidermonkey/lib \
-    taskset -c 0,1 go build -p 2 -trimpath -tags netgo,osusergo \
-      -ldflags="-s -w -linkmode external -extldflags '-static -Wl,--strip-all'" \
+    go build -p 2 -trimpath -ldflags="-s -w" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
     file /out/aistudio2api
 
-# ---------- 运行时镜像 ----------
-FROM alpine:3.20
+# ---------- 运行时镜像（与上游 Dockerfile 一致用 debian:bookworm-slim） ----------
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache ca-certificates tzdata curl
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates tzdata curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # cloudflared 基线 ≥2026.10.2（eMudhra 中间证书事件后 CF 强制），钉 2026.10.7 + sha256
 ARG CLOUDFLARED_VERSION=2026.10.7
@@ -96,7 +82,8 @@ RUN set -eux; \
 
 COPY --from=build /out/aistudio2api /app/aistudio2api
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh /app/aistudio2api
+RUN chmod 0755 /usr/local/bin/entrypoint.sh /app/aistudio2api \
+    && /app/aistudio2api --help | head -n 5
 
 ENV TZ=Asia/Singapore \
     LISTEN_ADDR=0.0.0.0:10000 \
