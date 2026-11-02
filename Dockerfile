@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.2.18 + 云端补丁（输出前重发 + 换行归一化）· Render 自建镜像
+# AIStudio2API v0.2.19 + 云端补丁（输出前重发 + 换行归一化）· Render 自建镜像
 #
 # 设计要点（2026-11-01 定案）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
-#   - 改为构建时从上游源码编译：拉 v0.2.18 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
-#   - 补丁文件仅 13KB（文本），随仓库走，永远同步
+#   - 改为构建时从上游源码编译：拉 v0.2.19 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
+#   - 补丁文件仅 14KB（文本），随仓库走，永远同步
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
 # ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
-ARG UPSTREAM_TAG=v0.2.18
+ARG UPSTREAM_TAG=v0.2.19
 ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
 
 # SpiderMonkey 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
