@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 92d85d6..b192da4 100644
+index c71dfee..ab82e8e 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -7,6 +7,7 @@ import (
@@ -7,10 +7,10 @@ index 92d85d6..b192da4 100644
  	"fmt"
  	"io"
 +	"log/slog"
+ 	"net/http"
  	"regexp"
  	"slices"
- 	"strconv"
-@@ -758,6 +759,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
+@@ -762,6 +763,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
  }
  
  func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan Event, error) {
@@ -20,25 +20,31 @@ index 92d85d6..b192da4 100644
  	lease, leased := AccountLeaseFromContext(ctx)
  	build := leased && lease.Channel() == ChannelBuild
  	var entry modelEntry
-@@ -814,13 +818,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+@@ -816,17 +820,13 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 	request.Contents = applySpeechTranscript(request.Contents, entry.model, request.Config)
+ 	wireRequest := request
  	wireRequest.Config.StopSequences = nil
- 	var response *RPCResponse
- 	var decodeStream func(io.Reader, func(Event) error) error
--	switch {
--	case entry.model.Capabilities["assistant_route"]:
--		response, decodeStream, err = c.sendAssistant(ctx, wireRequest, entry)
--	case build:
--		response, decodeStream, err = c.sendBuild(ctx, wireRequest, entry)
--	default:
--		response, decodeStream, err = c.sendPlayground(ctx, wireRequest, entry)
+-	sendRequest := func() (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
+-		switch {
+-		case entry.model.Capabilities["assistant_route"]:
+-			return c.sendAssistant(ctx, wireRequest, entry)
+-		case build:
+-			return c.sendBuild(ctx, wireRequest, entry)
+-		default:
+-			return c.sendPlayground(ctx, wireRequest, entry)
+-		}
++	var response *RPCResponse
++	var decodeStream func(io.Reader, func(Event) error) error
 +	response, decodeStream, err = c.sendStreamRequest(ctx, wireRequest, entry, build)
 +	// 上游同步拒绝时（非流式 Build 调用）同样回退：此时尚未输出任何内容，重发是安全的
 +	if err != nil && isThoughtSignatureError(err) {
 +		response, decodeStream, err = c.retryWithoutThoughtSignatures(ctx, wireRequest, entry, build, err)
  	}
+-	response, decodeStream, err := sendRequest()
  	if err != nil {
  		return nil, err
-@@ -854,6 +855,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 	}
+@@ -862,6 +862,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
  		var finish *Event
  		var output Output
  		matchedStopSequence := ""
@@ -49,7 +55,7 @@ index 92d85d6..b192da4 100644
  		emitEvent := func(event Event) error {
  			switch event.Kind {
  			case EventUsage:
-@@ -875,11 +880,26 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+@@ -883,6 +887,9 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
  						TurnToken: event.TurnToken, DebugInfo: event.DebugInfo, ResponseID: event.ResponseID, FrameUsage: event.FrameUsage, FinishFrame: event.FinishFrame,
  					}
  				}
@@ -59,8 +65,19 @@ index 92d85d6..b192da4 100644
  				return send(event)
  			}
  		}
- 		emit := stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
- 		err := decodeStream(observeStreamActivity(ctx, response.Body), emit)
+@@ -891,7 +898,7 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 		for regenerated := 0; regenerated < regenerations && regenerable(ctx, err, finish, output); regenerated++ {
+ 			stopClose()
+ 			_ = response.Body.Close()
+-			if response, decodeStream, err = sendRequest(); err != nil {
++			if response, decodeStream, err = c.sendStreamRequest(ctx, wireRequest, entry, build); err != nil {
+ 				if ctx.Err() == nil {
+ 					_ = send(Event{Kind: EventError, Err: err})
+ 				}
+@@ -903,6 +910,23 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
+ 			emit = stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
+ 			err = decodeStream(observeStreamActivity(ctx, response.Body), emit)
+ 		}
 +		// 上游在输出任何正文之前拒绝时（历史思考签名校验失败、通道级 400/404/500 等），
 +		// 客户端拿不到 finishReason，会报 "stream ended without a finish reason"。
 +		// 此时重发一次，对用户透明；重发仍失败则保留原始错误。
@@ -68,18 +85,23 @@ index 92d85d6..b192da4 100644
 +		if err != nil && !emitted && ctx.Err() == nil && !retried {
 +			retried = true
 +			if retryResponse, retryDecode, retryErr := c.retryBeforeOutput(ctx, wireRequest, entry, build, err); retryErr == nil {
++				stopClose()
 +				_ = response.Body.Close()
 +				response, decodeStream = retryResponse, retryDecode
++				stopClose = closeOnCancel(response)
++				usage, finish = nil, nil
++				matcher = newStopSequenceMatcher(request.Config.StopSequences)
++				emit = stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
 +				err = decodeStream(observeStreamActivity(ctx, response.Body), emit)
 +			}
 +		}
  		if errors.Is(err, errStopSequenceMatched) {
  			_ = response.Body.Close()
  			finishAtStopSequence(ctx, request, output, stopTokenCount, matchedStopSequence, send)
-@@ -981,6 +1001,106 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
+@@ -1017,6 +1041,107 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
+ 	_ = send(Event{Kind: EventFinish, FinishReason: "stop_sequence", StopSequence: sequence})
  }
  
- // truncateRequest 按权威计数删除最早的完整对话轮次，倍增定位后二分查找最少的删除轮数
 +// sendStreamRequest 按通道路由发送生成请求，返回响应与流解码函数
 +func (c *Client) sendStreamRequest(ctx context.Context, request GenerateRequest, entry modelEntry, build bool) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
 +	switch {
@@ -180,9 +202,10 @@ index 92d85d6..b192da4 100644
 +	request.Contents = contents
 +	return request, true
 +}
++
+ // truncateRequest 按权威计数删除最早的完整对话轮次，倍增定位后二分查找最少的删除轮数
  func (c *Client) truncateRequest(ctx context.Context, request GenerateRequest, limit int64) (GenerateRequest, error) {
  	starts := []int{0}
- 	for start := 0; ; {
 diff --git a/internal/aistudio/lineending_test.go b/internal/aistudio/lineending_test.go
 new file mode 100644
 index 0000000..e1cb72a
