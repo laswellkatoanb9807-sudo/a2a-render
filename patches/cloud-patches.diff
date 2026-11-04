@@ -1,211 +1,17 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index c71dfee..ab82e8e 100644
+index 3c51869..72e77a1 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
-@@ -7,6 +7,7 @@ import (
- 	"errors"
- 	"fmt"
- 	"io"
-+	"log/slog"
- 	"net/http"
- 	"regexp"
- 	"slices"
-@@ -762,6 +763,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
+@@ -764,6 +764,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
  }
  
  func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan Event, error) {
-+	// 换行归一化：WAA proof 把 digest 绑定到请求文本，官网 textarea 与服务端双双只认 LF。
++	// WAA proof 把 digest 绑定到请求文本，官网 textarea 与服务端双双只认 LF。
 +	// 必须在编码请求体与 Build/Playground 分流之前完成，否则 digest 与发往上游的正文会不一致。
 +	normalizeGenerateRequestLineEndings(&request)
  	lease, leased := AccountLeaseFromContext(ctx)
  	build := leased && lease.Channel() == ChannelBuild
  	var entry modelEntry
-@@ -816,17 +820,13 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
- 	request.Contents = applySpeechTranscript(request.Contents, entry.model, request.Config)
- 	wireRequest := request
- 	wireRequest.Config.StopSequences = nil
--	sendRequest := func() (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
--		switch {
--		case entry.model.Capabilities["assistant_route"]:
--			return c.sendAssistant(ctx, wireRequest, entry)
--		case build:
--			return c.sendBuild(ctx, wireRequest, entry)
--		default:
--			return c.sendPlayground(ctx, wireRequest, entry)
--		}
-+	var response *RPCResponse
-+	var decodeStream func(io.Reader, func(Event) error) error
-+	response, decodeStream, err = c.sendStreamRequest(ctx, wireRequest, entry, build)
-+	// 上游同步拒绝时（非流式 Build 调用）同样回退：此时尚未输出任何内容，重发是安全的
-+	if err != nil && isThoughtSignatureError(err) {
-+		response, decodeStream, err = c.retryWithoutThoughtSignatures(ctx, wireRequest, entry, build, err)
- 	}
--	response, decodeStream, err := sendRequest()
- 	if err != nil {
- 		return nil, err
- 	}
-@@ -862,6 +862,10 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
- 		var finish *Event
- 		var output Output
- 		matchedStopSequence := ""
-+		// 正文是否已开始输出：只有尚未输出任何正文时才能安全地重发请求
-+		emitted := false
-+		// 是否已经为「输出前拒绝」重发过一次，避免上游持续拒绝时反复重试
-+		retried := false
- 		emitEvent := func(event Event) error {
- 			switch event.Kind {
- 			case EventUsage:
-@@ -883,6 +887,9 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
- 						TurnToken: event.TurnToken, DebugInfo: event.DebugInfo, ResponseID: event.ResponseID, FrameUsage: event.FrameUsage, FinishFrame: event.FinishFrame,
- 					}
- 				}
-+				if event.Kind != EventError && event.Kind != EventThoughtSignature {
-+					emitted = true
-+				}
- 				return send(event)
- 			}
- 		}
-@@ -891,7 +898,7 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
- 		for regenerated := 0; regenerated < regenerations && regenerable(ctx, err, finish, output); regenerated++ {
- 			stopClose()
- 			_ = response.Body.Close()
--			if response, decodeStream, err = sendRequest(); err != nil {
-+			if response, decodeStream, err = c.sendStreamRequest(ctx, wireRequest, entry, build); err != nil {
- 				if ctx.Err() == nil {
- 					_ = send(Event{Kind: EventError, Err: err})
- 				}
-@@ -903,6 +910,23 @@ func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan
- 			emit = stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
- 			err = decodeStream(observeStreamActivity(ctx, response.Body), emit)
- 		}
-+		// 上游在输出任何正文之前拒绝时（历史思考签名校验失败、通道级 400/404/500 等），
-+		// 客户端拿不到 finishReason，会报 "stream ended without a finish reason"。
-+		// 此时重发一次，对用户透明；重发仍失败则保留原始错误。
-+		// 三道锁：仅在尚未输出正文时、仅重发一次、客户端取消时不重发。
-+		if err != nil && !emitted && ctx.Err() == nil && !retried {
-+			retried = true
-+			if retryResponse, retryDecode, retryErr := c.retryBeforeOutput(ctx, wireRequest, entry, build, err); retryErr == nil {
-+				stopClose()
-+				_ = response.Body.Close()
-+				response, decodeStream = retryResponse, retryDecode
-+				stopClose = closeOnCancel(response)
-+				usage, finish = nil, nil
-+				matcher = newStopSequenceMatcher(request.Config.StopSequences)
-+				emit = stopSequenceEmitter(matcher, emitEvent, &matchedStopSequence)
-+				err = decodeStream(observeStreamActivity(ctx, response.Body), emit)
-+			}
-+		}
- 		if errors.Is(err, errStopSequenceMatched) {
- 			_ = response.Body.Close()
- 			finishAtStopSequence(ctx, request, output, stopTokenCount, matchedStopSequence, send)
-@@ -1017,6 +1041,107 @@ func finishAtStopSequence(ctx context.Context, request GenerateRequest, output O
- 	_ = send(Event{Kind: EventFinish, FinishReason: "stop_sequence", StopSequence: sequence})
- }
- 
-+// sendStreamRequest 按通道路由发送生成请求，返回响应与流解码函数
-+func (c *Client) sendStreamRequest(ctx context.Context, request GenerateRequest, entry modelEntry, build bool) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
-+	switch {
-+	case entry.model.Capabilities["assistant_route"]:
-+		return c.sendAssistant(ctx, request, entry)
-+	case build:
-+		return c.sendBuild(ctx, request, entry)
-+	default:
-+		return c.sendPlayground(ctx, request, entry)
-+	}
-+}
-+
-+// retryBeforeOutput 在尚未输出正文时重发一次生成请求。
-+// 若上游因历史思考签名拒绝，则剥离签名后重发（沿用既有语义）；其余情况原样重发。
-+// 重发本身失败时保留原始错误，不静默吞掉上游新增的错误。
-+func (c *Client) retryBeforeOutput(
-+	ctx context.Context,
-+	request GenerateRequest,
-+	entry modelEntry,
-+	build bool,
-+	cause error,
-+) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
-+	retryRequest, reason := request, "上游在输出正文前拒绝，已原样重发一次"
-+	if isThoughtSignatureError(cause) {
-+		if stripped, ok := withoutThoughtSignatures(request); ok {
-+			retryRequest, reason = stripped, "历史思考签名被上游拒绝，已剥离签名重试"
-+		}
-+	}
-+	response, decodeStream, err := c.sendStreamRequest(ctx, retryRequest, entry, build)
-+	if err != nil {
-+		slog.Warn("输出前重发请求失败", "model", entry.model.ID, "error", err.Error())
-+		return nil, nil, errors.Join(cause, err)
-+	}
-+	slog.Warn(reason, "model", entry.model.ID, "error", cause.Error())
-+	return response, decodeStream, nil
-+}
-+
-+// retryWithoutThoughtSignatures 剥离历史签名后重发一次；无法剥离时原样返回原错误
-+func (c *Client) retryWithoutThoughtSignatures(
-+	ctx context.Context,
-+	request GenerateRequest,
-+	entry modelEntry,
-+	build bool,
-+	cause error,
-+) (*RPCResponse, func(io.Reader, func(Event) error) error, error) {
-+	stripped, ok := withoutThoughtSignatures(request)
-+	if !ok {
-+		return nil, nil, cause
-+	}
-+	response, decodeStream, err := c.sendStreamRequest(ctx, stripped, entry, build)
-+	if err != nil {
-+		return nil, nil, errors.Join(cause, err)
-+	}
-+	slog.Warn("历史思考签名被上游拒绝，已剥离签名重试", "model", entry.model.ID, "error", cause.Error())
-+	return response, decodeStream, nil
-+}
-+
-+// isThoughtSignatureError 判断上游是否因历史思考签名校验失败而拒绝请求
-+// 上游两种写法都要覆盖：AI Studio Web 用 "thought signature"，官方 API 用 "thought_signature"
-+func isThoughtSignatureError(err error) bool {
-+	if err == nil {
-+		return false
-+	}
-+	message := strings.ToLower(err.Error())
-+	return strings.Contains(message, "thought signature") || strings.Contains(message, "thought_signature")
-+}
-+
-+// withoutThoughtSignatures 返回剥离全部历史思考签名的请求副本，没有签名时返回 false
-+// 注意：仅承载签名的独立 Part 剥离后会变成空 Part（无法编码），必须整段删除
-+func withoutThoughtSignatures(request GenerateRequest) (GenerateRequest, bool) {
-+	found := false
-+	contents := make([]Content, len(request.Contents))
-+	for index, content := range request.Contents {
-+		parts := make([]Part, 0, len(content.Parts))
-+		for _, part := range content.Parts {
-+			if part.ThoughtSignature != "" {
-+				part.ThoughtSignature = ""
-+				found = true
-+			}
-+			if part.FunctionCall != nil && part.FunctionCall.ThoughtSignature != "" {
-+				call := *part.FunctionCall
-+				call.ThoughtSignature = ""
-+				part.FunctionCall = &call
-+				found = true
-+			}
-+			// 剥离后不再承载任何内容的 Part 直接丢弃，否则编码会因“part 必须且只能设置一种内容”失败
-+			if part.empty() {
-+				continue
-+			}
-+			parts = append(parts, part)
-+		}
-+		content.Parts = parts
-+		contents[index] = content
-+	}
-+	if !found {
-+		return request, false
-+	}
-+	request.Contents = contents
-+	return request, true
-+}
-+
- // truncateRequest 按权威计数删除最早的完整对话轮次，倍增定位后二分查找最少的删除轮数
- func (c *Client) truncateRequest(ctx context.Context, request GenerateRequest, limit int64) (GenerateRequest, error) {
- 	starts := []int{0}
 diff --git a/internal/aistudio/lineending_test.go b/internal/aistudio/lineending_test.go
 new file mode 100644
 index 0000000..e1cb72a
@@ -258,16 +64,15 @@ index 0000000..e1cb72a
 +	normalizeGenerateRequestLineEndings(nil)
 +}
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index b8f5d42..c516ef5 100644
+index c9ad5ee..098e14f 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
-@@ -45,6 +45,17 @@ func NewNativeWorker(ctx context.Context, accountID string, options camoufoxnati
- 	}, nil
- }
+@@ -30,6 +30,16 @@ type NativeWorker struct {
+ var _ ProtectedPreparer = (*NativeWorker)(nil)
+ var _ ProtocolHeaderProvider = (*NativeWorker)(nil)
  
-+// normalizePromptLineEndings 把 prompt 的换行归一化为 LF，保证 digest、写入与回读三方一致。
-+// 官网 textarea 按 Firefox 规则把 CRLF 与 CR 归一为 LF，含 \r 的文本与回读值永远对不上：
-+// Camoufox 后端表现为 Proof 超时后 Worker 重建，服务端也会因 digest 失配判 403。归一化对模型语义无损且幂等。
++// normalizePromptLineEndings 把提示词换行归一化为 LF，保证 digest、写入与回读三方一致。
++// 官网 textarea 按 Firefox 规则把 CRLF 与 CR 归一为 LF；含 \r 的文本与回读值永远对不上。
 +func normalizePromptLineEndings(prompt string) string {
 +	if !strings.Contains(prompt, "\r") {
 +		return prompt
@@ -276,30 +81,31 @@ index b8f5d42..c516ef5 100644
 +	return strings.ReplaceAll(prompt, "\r", "\n")
 +}
 +
- // Prepare 生成 fresh proof 并写入请求指定的 WAA field
- func (worker *NativeWorker) Prepare(ctx context.Context, request ProtectedRequest) (PreparedProtectedRequest, error) {
- 	start, end, err := arrayElementSpan(request.Body, request.ProofField-1)
-@@ -65,6 +76,7 @@ func (worker *NativeWorker) Prepare(ctx context.Context, request ProtectedReques
- func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page string) (string, http.Header, error) {
+ // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
+ type camoufoxRuntime struct {
+ 	*camoufoxnative.Worker
+@@ -122,6 +132,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
  	worker.operationMu.Lock()
  	defer worker.operationMu.Unlock()
-+	binding = normalizePromptLineEndings(binding)
  	worker.setPhase(WorkerBusy)
++	binding = normalizePromptLineEndings(binding)
  	digest := sha256.Sum256([]byte(binding))
- 	proof, err := worker.runtime.Proof(ctx, fmt.Sprintf("%x", digest), page)
+ 	runtime := worker.current()
+ 	var proof string
+@@ -232,7 +243,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
+ 	if err != nil {
+ 		return nil, fmt.Errorf("受保护请求缺少 WAA field %d: %w", request.ProofField, err)
+ 	}
+-	digest := sha256.Sum256([]byte(request.Prompt))
++	digest := sha256.Sum256([]byte(normalizePromptLineEndings(request.Prompt)))
+ 	worker.setPhase(WorkerBusy)
+ 	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{Body: request.Body, ProofStart: start, ProofEnd: end, Digest: fmt.Sprintf("%x", digest)})
+ 	if err != nil {
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index e4572e2..e544813 100644
+index 084004e..83dd69b 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -243,6 +243,7 @@ func (t *WorkerProtectedTransport) prepareProtectedRequest(
- // DoProtectedVideo 写入 Veo fresh proof 后经 Worker 页面发送请求，页面输入框的提示词为视频提示词
- func (t *WorkerProtectedTransport) DoProtectedVideo(ctx context.Context, request VideoRequest, rpc RPCRequest) (*RPCResponse, error) {
- 	modelID := strings.TrimPrefix(strings.TrimSpace(request.Model), "models/")
-+	request.Prompt = normalizePromptLineEndings(request.Prompt)
- 	return t.doPrepared(ctx, request.Prompt, request.Prompt, 8, AccountSelection{
- 		ModelID: modelID, Method: "predictLongRunning", AccountID: strings.TrimSpace(request.AccountID),
- 	}, rpc)
-@@ -253,6 +254,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+@@ -241,6 +241,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
  	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, AccountSelection{ModelID: request.Model}, rpc)
  }
  
