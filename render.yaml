@@ -54,7 +54,8 @@ services:
         value: gemini-4-argon:playground
       - key: WAA_BACKEND
         value: spidermonkey
-      - key: TEMPORARY_CHAT
+      # v0.3.0 原生：发送前剥离历史思考签名（取代旧补丁「被拒后剥离重试」）
+      - key: STRIP_THOUGHT_SIGNATURES
         value: "true"
       - key: MEDIA_OUTPUT
         value: inline
