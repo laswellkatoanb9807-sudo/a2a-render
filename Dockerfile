@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1
 # AIStudio2API v0.3.1 + 云端补丁（CRLF 全链路归一化）· Render 自建镜像
 #
-# 设计要点（2026-11-01 定案，2026-11-04 升级 v0.3.0）：
+# 设计要点（2026-11-01 定案，2026-11-06 升级 v0.3.1）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
-#   - 改为构建时从上游源码编译：拉 v0.3.0 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
-#   - 补丁文件仅 6KB（文本），随仓库走，永远同步；v0.3.0 已原生实现签名剥离与无输出重生成，只留上游未修的 CRLF 归一化
+#   - 改为构建时从上游源码编译：拉 v0.3.1 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
+#   - 补丁文件仅 6KB（文本），随仓库走，永远同步；v0.3.0+ 已原生实现签名剥离与无输出重生成，只留上游未修的 CRLF 归一化
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
 # ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
@@ -13,13 +13,16 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
 ARG UPSTREAM_TAG=v0.3.1
 ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
+ARG LIBWEBP=v1.6.0-aistudio2api.1
 
-# SpiderMonkey 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
+# SpiderMonkey + libwebp 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
 RUN set -eux; \
-    mkdir -p /opt/spidermonkey; \
+    mkdir -p /opt/spidermonkey /opt/libwebp; \
     curl -fsSL "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64-gnu.tar.gz" \
       | tar -xz --no-same-owner -C /opt/spidermonkey; \
-    ls /opt/spidermonkey/lib
+    curl -fsSL "https://github.com/Mag1cFall/libwebp/releases/download/${LIBWEBP}/libwebp-${LIBWEBP}-linux-amd64-gnu.tar.gz" \
+      | tar -xz --no-same-owner -C /opt/libwebp; \
+    ls /opt/spidermonkey/lib /opt/libwebp/lib
 
 WORKDIR /src
 
@@ -68,8 +71,8 @@ RUN set -eux; \
     ar rcs /opt/spidermonkey/lib/libjsrust.a /tmp/isoc23.o; \
     VERSION="$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)"; \
     CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
-    CGO_CXXFLAGS=-I/opt/spidermonkey/include \
-    CGO_LDFLAGS=-L/opt/spidermonkey/lib \
+    CGO_CPPFLAGS="-I/opt/spidermonkey/include -I/opt/libwebp/include" \
+    CGO_LDFLAGS="-L/opt/spidermonkey/lib -L/opt/libwebp/lib" \
     go build -p 2 -trimpath \
       -ldflags="-s -w -X github.com/Mag1cFall/AIStudio2API/internal/app.version=${VERSION}-cloud -X github.com/Mag1cFall/AIStudio2API/internal/app.managedBy=render-docker" \
       -o /out/aistudio2api ./cmd/aistudio2api; \
