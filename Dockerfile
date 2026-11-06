@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.2.18 + 云端补丁（输出前重发 + 换行归一化）· Render 自建镜像
+# AIStudio2API v0.3.1 + 云端补丁（CRLF 全链路归一化）· Render 自建镜像
 #
-# 设计要点（2026-11-01 定案）：
+# 设计要点（2026-11-01 定案，2026-11-04 升级 v0.3.0）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
-#   - 改为构建时从上游源码编译：拉 v0.2.18 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
-#   - 补丁文件仅 13KB（文本），随仓库走，永远同步
+#   - 改为构建时从上游源码编译：拉 v0.3.0 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey 静态编译
+#   - 补丁文件仅 6KB（文本），随仓库走，永远同步；v0.3.0 已原生实现签名剥离与无输出重生成，只留上游未修的 CRLF 归一化
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
 # ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
-ARG UPSTREAM_TAG=v0.2.18
+ARG UPSTREAM_TAG=v0.3.1
 ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
 
 # SpiderMonkey 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
@@ -27,12 +27,14 @@ WORKDIR /src
 RUN git clone --depth 1 --branch "${UPSTREAM_TAG}" "${UPSTREAM_REPO}" . \
     && git log --oneline -1
 
-# 打入云端补丁：输出前重发 + CRLF 全链路归一化（补丁不落地即构建失败，别让它悄悄跳过）
+# 打入云端补丁：CRLF 全链路归一化（补丁不落地即构建失败，别让它悄悄跳过）
 COPY patches/cloud-patches.diff /tmp/cloud-patches.diff
 RUN git apply --check /tmp/cloud-patches.diff \
  && git apply /tmp/cloud-patches.diff \
- && grep -c "retryBeforeOutput" internal/aistudio/generate.go \
- && grep -c "normalizePromptLineEndings" internal/aistudio/service.go
+ && grep -c "normalizeGenerateRequestLineEndings" internal/aistudio/generate.go \
+ && grep -c "normalizeGenerateRequestLineEndings" internal/aistudio/service.go \
+ && grep -c "normalizePromptLineEndings" internal/aistudio/runtime_native.go \
+ && test -f internal/aistudio/lineending_test.go
 
 # ---------- 阶段 2：前端产物（独立 Node 22 阶段，与上游 Dockerfile 一致） ----------
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
@@ -40,6 +42,9 @@ WORKDIR /src/web
 COPY --from=src /src/web/package.json /src/web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY --from=src /src/web/ ./
+# v0.3.0 起前端 6 个 locale 从 ../../../internal/i18n/messages/*.json 取服务端文案翻译表；
+# 少了这一行 npx vp build 必报 6 个 UNRESOLVED_IMPORT（上游自带 Dockerfile 也漏了）
+COPY --from=src /src/internal/i18n/messages /src/internal/i18n/messages
 RUN npx vp build && test -f /src/internal/webui/dist/index.html
 
 # ---------- 阶段 3：CGO + SpiderMonkey 编译（与上游 CI checks job 一致） ----------
