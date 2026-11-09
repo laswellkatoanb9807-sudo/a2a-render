@@ -8,7 +8,7 @@ MSG="${1:-update render build files}"
 TOKEN="$(gh auth token)"
 cd "$(dirname "$0")"
 
-FILES=(Dockerfile render.yaml entrypoint.sh push-render.sh .gitignore .gitattributes patches/cloud-patches.diff)
+FILES=(Dockerfile render.yaml entrypoint.sh push-render.sh .gitignore .gitattributes patches/cloud-patches.diff README.md verify-remote.sh)
 
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || { echo "skip (missing): $f"; continue; }
