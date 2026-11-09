@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 4a9bdf4..2a55915 100644
+index 2bd5f00..8c1e8cd 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -764,6 +764,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
@@ -64,7 +64,7 @@ index 0000000..e1cb72a
 +	normalizeGenerateRequestLineEndings(nil)
 +}
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index c9ad5ee..098e14f 100644
+index 1493388..b45b211 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
 @@ -30,6 +30,16 @@ type NativeWorker struct {
@@ -84,7 +84,7 @@ index c9ad5ee..098e14f 100644
  // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
  type camoufoxRuntime struct {
  	*camoufoxnative.Worker
-@@ -122,6 +132,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
+@@ -135,6 +145,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
  	worker.operationMu.Lock()
  	defer worker.operationMu.Unlock()
  	worker.setPhase(WorkerBusy)
@@ -92,7 +92,7 @@ index c9ad5ee..098e14f 100644
  	digest := sha256.Sum256([]byte(binding))
  	runtime := worker.current()
  	var proof string
-@@ -232,7 +243,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
+@@ -245,7 +256,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
  	if err != nil {
  		return nil, fmt.Errorf("受保护请求缺少 WAA field %d: %w", request.ProofField, err)
  	}
