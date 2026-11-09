@@ -18,9 +18,9 @@ ARG LIBWEBP=v1.6.0-aistudio2api.1
 # SpiderMonkey + libwebp 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
 RUN set -eux; \
     mkdir -p /opt/spidermonkey /opt/libwebp; \
-    curl -fsSL "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64-gnu.tar.gz" \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64-gnu.tar.gz" \
       | tar -xz --no-same-owner -C /opt/spidermonkey; \
-    curl -fsSL "https://github.com/Mag1cFall/libwebp/releases/download/${LIBWEBP}/libwebp-${LIBWEBP}-linux-amd64-gnu.tar.gz" \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/Mag1cFall/libwebp/releases/download/${LIBWEBP}/libwebp-${LIBWEBP}-linux-amd64-gnu.tar.gz" \
       | tar -xz --no-same-owner -C /opt/libwebp; \
     ls /opt/spidermonkey/lib /opt/libwebp/lib
 
