@@ -12,16 +12,27 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
 ARG UPSTREAM_TAG=v0.3.3
-ARG SPIDERMONKEY=v152.0.4-aistudio2api.1
-ARG LIBWEBP=v1.6.0-aistudio2api.1
+# 固定 Release Asset ID + SHA-256；走 GitHub 官方 Asset API，避开 releases/download 的 504 故障
+ARG SPIDERMONKEY_ASSET_ID=708795279
+ARG SPIDERMONKEY_SHA256=50df89da549e87f0baedfaa15f05ba5faf4719eaafee5da48c3b9f46a29b06d3
+ARG LIBWEBP_ASSET_ID=712536926
+ARG LIBWEBP_SHA256=1c89878d1f7c7b7232ea8fad1292a8f6c70f3d2d92fffc24c1fa6ac9e8070c85
 
-# SpiderMonkey + libwebp 静态库（使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM）
+# SpiderMonkey v152.0.4-aistudio2api.1 + libwebp v1.6.0-aistudio2api.1 静态库
+# 使用 linux-amd64-gnu 配合 bookworm 原生 gcc/g++，避免 Zig 编译 libcxx 在 2GB 构建容器 OOM
 RUN set -eux; \
     mkdir -p /opt/spidermonkey /opt/libwebp; \
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/Mag1cFall/firefox/releases/download/${SPIDERMONKEY}/spidermonkey-${SPIDERMONKEY}-linux-amd64-gnu.tar.gz" \
-      | tar -xz --no-same-owner -C /opt/spidermonkey; \
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "https://github.com/Mag1cFall/libwebp/releases/download/${LIBWEBP}/libwebp-${LIBWEBP}-linux-amd64-gnu.tar.gz" \
-      | tar -xz --no-same-owner -C /opt/libwebp; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+      -H "Accept: application/octet-stream" \
+      -o /tmp/spidermonkey.tar.gz "https://api.github.com/repos/Mag1cFall/firefox/releases/assets/${SPIDERMONKEY_ASSET_ID}"; \
+    echo "${SPIDERMONKEY_SHA256}  /tmp/spidermonkey.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/spidermonkey.tar.gz --no-same-owner -C /opt/spidermonkey; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 \
+      -H "Accept: application/octet-stream" \
+      -o /tmp/libwebp.tar.gz "https://api.github.com/repos/Mag1cFall/libwebp/releases/assets/${LIBWEBP_ASSET_ID}"; \
+    echo "${LIBWEBP_SHA256}  /tmp/libwebp.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/libwebp.tar.gz --no-same-owner -C /opt/libwebp; \
+    rm -f /tmp/spidermonkey.tar.gz /tmp/libwebp.tar.gz; \
     ls /opt/spidermonkey/lib /opt/libwebp/lib
 
 WORKDIR /src
