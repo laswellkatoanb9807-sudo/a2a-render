@@ -1,23 +1,26 @@
 # AIStudio2API · Render 新加坡部署仓库
 
+> 现役：`v0.3.3-cloud`（2026-11-09，部署 `dep-dbolq595efls73e9bhcg` / 提交 `2d1f768`）。
+
 > 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
 
 ## 内容
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | alpine 基础镜像 → 校验 gz sha256 → 解压出 a2a 二进制 |
+| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.3 + CRLF 补丁；静态库走 GitHub Asset API 并校验 SHA-256 |
 | `entrypoint.sh` | 保证 `/var/data/{auth,runtime}` 就位 |
 | `render.yaml` | Render Blueprint：新加坡 / 1c-2G / 2GB 盘挂 `/var/data` / 全量环境变量 |
-| `artifacts/*.gz` | v0.2.14 + cloud-patches 二进制（gz 哈希 `8bed5f9e…`，与基地区台账一致） |
+| `patches/cloud-patches.diff` | 仅 CRLF 全链路归一化（约 6KB），构建时应用并自检 |
+| `verify-remote.sh` | 直连 Render 的六项验收脚本 |
 
 ## 关键设计
 
-- **不要隧道**：Render 直出 HTTPS，由 Cloudflare 侧 `a2a.yu-api.com` CNAME 指过来，Access 规则照旧生效。
+- **容器内出站隧道**：Render 直出 HTTPS，同时运行 cloudflared；`a2a.yu-api.com` 经 CF Tunnel 接入，Access 规则照旧生效（不要 CNAME 到 `onrender.com`，会触发 CF error 1000）。
 - **端口**：a2a 不认 `PORT`，只能用 `LISTEN_ADDR=0.0.0.0:10000`（Render 默认 PORT 也是 10000）。
 - **状态全落持久盘**：工作目录设为 `/var/data`，`.env`、`auth/`、`runtime/` 自然落在盘上，重建容器不丢账号。
-- **双账号**：`auth/` 下每个子目录 = 一个 Google 账号，`ROUTING_STRATEGY=round-robin` 轮流调度；某号某模型 429 只冷却那一格，请求自动切另一个号。
+- **双账号**：`auth/` 下每个子目录 = 一个 Google 账号，`ROUTING_STRATEGY=fill-first` 打满换号；某号某模型 429 只冷却那一格，请求自动切另一个号。
 
 ## 运维参考
 
-基地方档案 `aistudio2api-lifecycle.md`（§5 有 28 条已知坑）、`BUILD.md`（升级重编流程）。
+基地方档案 `aistudio2api-lifecycle.md`（§5 已知坑与 §10 Render SOP）、`BUILD.md`（升级重编流程）。
