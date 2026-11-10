@@ -1,17 +1,17 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.3.3 + 云端补丁（CRLF 全链路归一化）· Render 自建镜像
+# AIStudio2API v0.3.4 + 云端补丁（CRLF + 服务端工具签名保留）· Render 自建镜像
 #
-# 设计要点（2026-11-01 定案，2026-11-09 升级 v0.3.3）：
+# 设计要点（2026-11-01 定案，2026-11-10 升级 v0.3.4）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
-#   - 改为构建时从上游源码编译：拉 v0.3.3 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
-#   - 补丁文件仅 6KB（文本），随仓库走，永远同步；v0.3.0+ 已原生实现签名剥离与无输出重生成，只留上游未修的 CRLF 归一化
+#   - 改为构建时从上游源码编译：拉 v0.3.4 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
+#   - 补丁约 10KB 文本，随仓库同步；上游原生处理普通函数签名，本补丁补 CRLF 归一化并保留 STRIP 下服务端工具的真实签名
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
 # ---------- 阶段 1：编译底座 + 上游源码 + 云端补丁 ----------
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
-ARG UPSTREAM_TAG=v0.3.3
+ARG UPSTREAM_TAG=v0.3.4
 # 固定 Release Asset ID + SHA-256；走 GitHub 官方 Asset API，避开 releases/download 的 504 故障
 ARG SPIDERMONKEY_ASSET_ID=708795279
 ARG SPIDERMONKEY_SHA256=50df89da549e87f0baedfaa15f05ba5faf4719eaafee5da48c3b9f46a29b06d3
@@ -41,14 +41,16 @@ WORKDIR /src
 RUN git clone --depth 1 --branch "${UPSTREAM_TAG}" "${UPSTREAM_REPO}" . \
     && git log --oneline -1
 
-# 打入云端补丁：CRLF 全链路归一化（补丁不落地即构建失败，别让它悄悄跳过）
+# 打入云端补丁：CRLF 全链路归一化 + STRIP 下保留服务端工具签名（缺失则构建失败）
 COPY patches/cloud-patches.diff /tmp/cloud-patches.diff
 RUN git apply --check /tmp/cloud-patches.diff \
  && git apply /tmp/cloud-patches.diff \
  && grep -c "normalizeGenerateRequestLineEndings" internal/aistudio/generate.go \
  && grep -c "normalizeGenerateRequestLineEndings" internal/aistudio/service.go \
  && grep -c "normalizePromptLineEndings" internal/aistudio/runtime_native.go \
- && test -f internal/aistudio/lineending_test.go
+ && test -f internal/aistudio/lineending_test.go \
+ && test -f internal/aistudio/thoughtsig_strip_test.go \
+ && grep -c "ToolCall/ToolResponse 必须按上游原样重放" internal/aistudio/request.go
 
 # ---------- 阶段 2：前端产物（独立 Node 22 阶段，与上游 Dockerfile 一致） ----------
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS web
