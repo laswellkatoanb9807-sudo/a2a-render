@@ -1,6 +1,6 @@
 # AIStudio2API · Render 新加坡部署仓库
 
-> 现役：`v0.3.3-cloud`（2026-11-09，部署 `dep-dbolq595efls73e9bhcg` / 提交 `2d1f768`）。
+> 现役：`v0.3.4-cloud`（2026-11-10，部署 `dep-dbpaj8gn74is73dd0cb0` / 提交 `159cd31`）。另保留服务端工具真实签名，修复 RikkaHub 搜索+MCP 历史 `thought_signature` 400。
 
 > 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
 
