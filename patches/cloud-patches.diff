@@ -63,6 +63,32 @@ index 0000000..e1cb72a
 +	// nil 请求不得 panic
 +	normalizeGenerateRequestLineEndings(nil)
 +}
+diff --git a/internal/aistudio/request.go b/internal/aistudio/request.go
+index 7fe7821..9fea270 100644
+--- a/internal/aistudio/request.go
++++ b/internal/aistudio/request.go
+@@ -470,7 +470,7 @@ func setPartThoughtSignature(wire []any, signature string) []any {
+ 	return setWireField(wire, 14, signature)
+ }
+ 
+-// stripThoughtSignatures 返回去掉思考签名的对话：只带签名的 Part 删除，其余 Part 与函数调用的签名清空，函数调用发送时带跳过校验的占位签名
++// stripThoughtSignatures 返回可重放的历史：删除普通历史签名并为函数调用补占位符，保留服务端工具步骤的真实签名
+ func stripThoughtSignatures(contents []Content) []Content {
+ 	stripped := make([]Content, 0, len(contents))
+ 	for _, content := range contents {
+@@ -479,6 +479,12 @@ func stripThoughtSignatures(contents []Content) []Content {
+ 			if !part.payload() {
+ 				continue
+ 			}
++			// ToolCall/ToolResponse 必须按上游原样重放；普通 FunctionCall 的
++			// skip_thought_signature_validator 不适用于服务端工具历史。
++			if part.ToolCall != nil || part.ToolResponse != nil {
++				parts = append(parts, part)
++				continue
++			}
+ 			part.ThoughtSignature = ""
+ 			if part.FunctionCall != nil {
+ 				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
 index 1493388..b45b211 100644
 --- a/internal/aistudio/runtime_native.go
@@ -127,3 +153,81 @@ index 084004e..83dd69b 100644
  func bindingPrompt(request GenerateRequest) (string, error) {
  	if len(request.Contents) == 0 {
  		return "", fmt.Errorf("GenerateContent contents 不能为空")
+diff --git a/internal/aistudio/thoughtsig_strip_test.go b/internal/aistudio/thoughtsig_strip_test.go
+new file mode 100644
+index 0000000..3c5c8f9
+--- /dev/null
++++ b/internal/aistudio/thoughtsig_strip_test.go
+@@ -0,0 +1,72 @@
++package aistudio
++
++import (
++	"encoding/json"
++	"testing"
++)
++
++// TestStripThoughtSignaturesPreservesServerToolSignatures 验证 Gemini 服务端工具历史在
++// STRIP_THOUGHT_SIGNATURES=true 时保留真实签名，普通历史仍剥离且不修改输入。
++func TestStripThoughtSignaturesPreservesServerToolSignatures(t *testing.T) {
++	original := []Content{{Role: RoleAssistant, Parts: []Part{
++		{ThoughtSignature: "signature-only"},
++		{ToolCall: &ServerToolStep{ID: "call_1", Type: "GOOGLE_SEARCH_WEB"}, ThoughtSignature: "call-real"},
++		{ToolResponse: &ServerToolStep{ID: "call_1", Type: "GOOGLE_SEARCH_WEB"}, ThoughtSignature: "response-real"},
++		{FunctionCall: &FunctionCall{ID: "call_2", Name: "fixture", Arguments: json.RawMessage(`{"value":"ok"}`), ThoughtSignature: "function-real"}, ThoughtSignature: "part-real"},
++		{Text: "answer", ThoughtSignature: "text-real"},
++	}}}
++
++	stripped := stripThoughtSignatures(original)
++	if len(stripped) != 1 || len(stripped[0].Parts) != 4 {
++		t.Fatalf("stripped contents = %#v", stripped)
++	}
++	parts := stripped[0].Parts
++	if parts[0].ThoughtSignature != "call-real" || parts[1].ThoughtSignature != "response-real" {
++		t.Fatalf("server tool signatures were stripped: %#v", parts[:2])
++	}
++	if parts[2].ThoughtSignature != "" || parts[2].FunctionCall.ThoughtSignature != "" || parts[3].ThoughtSignature != "" {
++		t.Fatalf("ordinary signatures were not stripped: %#v", parts[2:])
++	}
++	if original[0].Parts[1].ThoughtSignature != "call-real" || original[0].Parts[3].FunctionCall.ThoughtSignature != "function-real" {
++		t.Fatal("input was mutated")
++	}
++
++	for index, want := range []string{"call-real", "response-real", "skip_thought_signature_validator"} {
++		wire, err := encodePart(parts[index])
++		if err != nil {
++			t.Fatal(err)
++		}
++		if len(wire) <= 14 || wire[14] != want {
++			t.Fatalf("part %d signature = %#v, want %q", index, wire, want)
++		}
++	}
++}
++
++// TestStripThoughtSignaturesFunctionPlaceholders 固定并行的普通函数调用行为：每个调用都带
++// skip_thought_signature_validator，独立签名 Part 删除，调用顺序保持不变。
++func TestStripThoughtSignaturesFunctionPlaceholders(t *testing.T) {
++	contents := []Content{{Role: RoleAssistant, Parts: []Part{
++		{ThoughtSignature: "signature-only"},
++		{FunctionCall: &FunctionCall{ID: "one", Name: "first", Arguments: json.RawMessage(`{}`)}},
++		{FunctionCall: &FunctionCall{ID: "two", Name: "second", Arguments: json.RawMessage(`{}`)}},
++		{FunctionCall: &FunctionCall{ID: "three", Name: "third", Arguments: json.RawMessage(`{}`), ThoughtSignature: "real"}},
++	}}}
++
++	stripped := stripThoughtSignatures(contents)
++	parts := stripped[0].Parts
++	if len(parts) != 3 {
++		t.Fatalf("parts = %#v", parts)
++	}
++	for index, id := range []string{"one", "two", "three"} {
++		if parts[index].FunctionCall.ID != id {
++			t.Fatalf("part %d ID = %q, want %q", index, parts[index].FunctionCall.ID, id)
++		}
++		wire, err := encodePart(parts[index])
++		if err != nil {
++			t.Fatal(err)
++		}
++		if len(wire) <= 14 || wire[14] != "skip_thought_signature_validator" {
++			t.Fatalf("part %d signature = %#v", index, wire)
++		}
++	}
++}
