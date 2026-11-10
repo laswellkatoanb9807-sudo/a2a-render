@@ -8,10 +8,10 @@
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.3 + CRLF 补丁；静态库走 GitHub Asset API 并校验 SHA-256 |
+| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.4 + CRLF 与服务端工具签名补丁；静态库走 GitHub Asset API 并校验 SHA-256 |
 | `entrypoint.sh` | 保证 `/var/data/{auth,runtime}` 就位 |
 | `render.yaml` | Render Blueprint：新加坡 / 1c-2G / 2GB 盘挂 `/var/data` / 全量环境变量 |
-| `patches/cloud-patches.diff` | 仅 CRLF 全链路归一化（约 6KB），构建时应用并自检 |
+| `patches/cloud-patches.diff` | CRLF 全链路归一化 + STRIP 下保留服务端工具真实签名（约 10KB），构建时应用并自检 |
 | `verify-remote.sh` | 直连 Render 的六项验收脚本 |
 
 ## 关键设计
