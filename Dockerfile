@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1
-# AIStudio2API v0.3.4 + 云端补丁（CRLF + 服务端工具签名保留）· Render 自建镜像
+# AIStudio2API v0.3.5 + 云端补丁（CRLF + 服务端工具签名保留）· Render 自建镜像
 #
-# 设计要点（2026-11-01 定案，2026-11-10 升级 v0.3.4）：
+# 设计要点（2026-11-01 定案，2026-11-10 升级 v0.3.5）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
-#   - 改为构建时从上游源码编译：拉 v0.3.4 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
+#   - 改为构建时从上游源码编译：拉 v0.3.5 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
 #   - 补丁约 10KB 文本，随仓库同步；上游原生处理普通函数签名，本补丁补 CRLF 归一化并保留 STRIP 下服务端工具的真实签名
 #   - 用 --platform=$BUILDPLATFORM 让编译在原生 amd64 上跑（Render 是 amd64，无模拟开销）
 
@@ -11,7 +11,7 @@
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS src
 
 ARG UPSTREAM_REPO=https://github.com/Mag1cFall/AIStudio2API.git
-ARG UPSTREAM_TAG=v0.3.4
+ARG UPSTREAM_TAG=v0.3.5
 # 固定 Release Asset ID + SHA-256；走 GitHub 官方 Asset API，避开 releases/download 的 504 故障
 ARG SPIDERMONKEY_ASSET_ID=708795279
 ARG SPIDERMONKEY_SHA256=50df89da549e87f0baedfaa15f05ba5faf4719eaafee5da48c3b9f46a29b06d3
