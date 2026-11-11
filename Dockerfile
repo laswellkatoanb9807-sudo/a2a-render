@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # AIStudio2API v0.3.5 + 云端补丁（CRLF + 服务端工具签名保留）· Render 自建镜像
 #
-# 设计要点（2026-11-01 定案，2026-11-10 升级 v0.3.5）：
+# 设计要点（2026-11-01 定案，2026-11-11 升级 v0.3.5）：
 #   - 二进制不在仓库里（81MB 太大，GitHub 推大文件必 408）
 #   - 改为构建时从上游源码编译：拉 v0.3.5 → 打 patches/cloud-patches.diff → CGO+SpiderMonkey+libwebp 静态编译
 #   - 补丁约 10KB 文本，随仓库同步；上游原生处理普通函数签名，本补丁补 CRLF 归一化并保留 STRIP 下服务端工具的真实签名
