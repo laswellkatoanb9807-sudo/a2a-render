@@ -1,6 +1,6 @@
 # AIStudio2API · Render 新加坡部署仓库
 
-> 构建目标：`v0.3.5-cloud`（2026-11-10，基于上游 `bab7209`）。另保留服务端工具真实签名，修复 RikkaHub 搜索+MCP 历史 `thought_signature` 400。部署 ID 与验收结论以基地方档案为准。
+> 现役：`v0.3.5-cloud`（2026-11-11，上游 `bab7209`，部署 `dep-dbpvooijnfac73ekv4k0` / 提交 `ae39fdc`）。另保留服务端工具真实签名，RikkaHub 搜索+MCP 历史严格回放 200。回滚与验收见基地方档案。
 
 > 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
 
