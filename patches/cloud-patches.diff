@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 294d851..ef93151 100644
+index 061ad97..e1fa93b 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -764,6 +764,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
@@ -90,7 +90,7 @@ index 7fe7821..9fea270 100644
  			if part.FunctionCall != nil {
  				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index 9240bc4..4cd48ba 100644
+index d02d151..98cf936 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
 @@ -34,6 +34,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
@@ -110,7 +110,7 @@ index 9240bc4..4cd48ba 100644
  // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
  type camoufoxRuntime struct {
  	*camoufoxnative.Worker
-@@ -139,6 +149,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
+@@ -145,6 +155,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
  	worker.operationMu.Lock()
  	defer worker.operationMu.Unlock()
  	worker.setPhase(WorkerBusy)
@@ -118,7 +118,7 @@ index 9240bc4..4cd48ba 100644
  	digest := sha256.Sum256([]byte(binding))
  	runtime := worker.current()
  	var proof string
-@@ -253,7 +264,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
+@@ -260,7 +271,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
  	if err != nil {
  		return nil, fmt.Errorf("受保护请求缺少 WAA field %d: %w", request.ProofField, err)
  	}
@@ -128,11 +128,11 @@ index 9240bc4..4cd48ba 100644
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{Body: request.Body, ProofStart: start, ProofEnd: end, Digest: fmt.Sprintf("%x", digest)})
  	if err != nil {
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index 084004e..83dd69b 100644
+index df789be..a6c976d 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -241,6 +241,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
- 	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, AccountSelection{ModelID: request.Model}, rpc)
+@@ -243,6 +243,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+ 	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, "", AccountSelection{ModelID: request.Model}, rpc)
  }
  
 +// normalizeGenerateRequestLineEndings 把生成请求的文本换行归一化为 LF，必须在编码请求体之前调用
