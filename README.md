@@ -1,6 +1,6 @@
 # AIStudio2API · Render 新加坡部署仓库
 
-> 现役：`v0.3.6-cloud`（2026-11-12，上游 `bd7f202`，部署 `dep-dbqkgqtg1s2s73ek5dl0` / 提交 `c8a756a`）。新增 Gemini Decision、工具断流续写与大附件内存优化；另保留 CRLF 和服务端工具真实签名，RikkaHub 搜索+MCP 历史严格回放 200。回滚与验收见基地方档案。
+> 现役：`v0.3.7-cloud`（2026-11-13，上游 `a68acad`，部署 `dep-dbr93etg1s2s73fq1seg` / 提交 `070510e`）。SpiderMonkey 升级 `v158.0.1-aistudio2api.1`、删除 `-build` 代码助手派生模型、新增受限账户识别与 `xhigh`/`extra_high`/`max` 思考档位、`MAX_ACCOUNT_SWITCHES=3`、`FIRST_EVENT_HEDGE` 默认改 `off`；另保留 CRLF 和服务端工具真实签名，RikkaHub 搜索+MCP 历史严格回放 200。回滚与验收见基地方档案。
 
 > 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
 
@@ -8,7 +8,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.6 + CRLF 与服务端工具签名补丁；静态库走 GitHub Asset API 并校验 SHA-256 |
+| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.7 + CRLF 与服务端工具签名补丁；SpiderMonkey v158.0.1 / libwebp v1.6.0 静态库走 GitHub Asset API 并校验 SHA-256 |
 | `entrypoint.sh` | 保证 `/var/data/{auth,runtime}` 就位 |
 | `render.yaml` | Render Blueprint：新加坡 / 1c-2G / 2GB 盘挂 `/var/data` / 全量环境变量 |
 | `patches/cloud-patches.diff` | CRLF 全链路归一化 + STRIP 下保留服务端工具真实签名（约 10KB），构建时应用并自检 |
