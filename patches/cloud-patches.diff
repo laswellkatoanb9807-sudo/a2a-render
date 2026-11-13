@@ -1,8 +1,8 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 061ad97..e1fa93b 100644
+index e657884..0e0736f 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
-@@ -764,6 +764,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
+@@ -771,6 +771,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
  }
  
  func (c *Client) Generate(ctx context.Context, request GenerateRequest) (<-chan Event, error) {
@@ -64,10 +64,10 @@ index 0000000..e1cb72a
 +	normalizeGenerateRequestLineEndings(nil)
 +}
 diff --git a/internal/aistudio/request.go b/internal/aistudio/request.go
-index 7fe7821..9fea270 100644
+index f71ee00..e8b3b37 100644
 --- a/internal/aistudio/request.go
 +++ b/internal/aistudio/request.go
-@@ -470,7 +470,7 @@ func setPartThoughtSignature(wire []any, signature string) []any {
+@@ -457,7 +457,7 @@ func setPartThoughtSignature(wire []any, signature string) []any {
  	return setWireField(wire, 14, signature)
  }
  
@@ -76,7 +76,7 @@ index 7fe7821..9fea270 100644
  func stripThoughtSignatures(contents []Content) []Content {
  	stripped := make([]Content, 0, len(contents))
  	for _, content := range contents {
-@@ -479,6 +479,12 @@ func stripThoughtSignatures(contents []Content) []Content {
+@@ -466,6 +466,12 @@ func stripThoughtSignatures(contents []Content) []Content {
  			if !part.payload() {
  				continue
  			}
@@ -128,10 +128,10 @@ index d02d151..98cf936 100644
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{Body: request.Body, ProofStart: start, ProofEnd: end, Digest: fmt.Sprintf("%x", digest)})
  	if err != nil {
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index df789be..a6c976d 100644
+index 473c205..658209c 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -243,6 +243,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+@@ -242,6 +242,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
  	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, "", AccountSelection{ModelID: request.Model}, rpc)
  }
  
