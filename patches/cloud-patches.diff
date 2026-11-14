@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index e657884..0e0736f 100644
+index 1968964..4409ce9 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -771,6 +771,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
@@ -14,10 +14,10 @@ index e657884..0e0736f 100644
  	var entry modelEntry
 diff --git a/internal/aistudio/lineending_test.go b/internal/aistudio/lineending_test.go
 new file mode 100644
-index 0000000..e1cb72a
+index 0000000..41509b1
 --- /dev/null
 +++ b/internal/aistudio/lineending_test.go
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,66 @@
 +package aistudio
 +
 +import "testing"
@@ -63,11 +63,32 @@ index 0000000..e1cb72a
 +	// nil 请求不得 panic
 +	normalizeGenerateRequestLineEndings(nil)
 +}
++
++// TestProofDigestNormalizesLineEndings 验证 proofDigest 对 Prompt 归一换行并保留显式 Digest
++func TestProofDigestNormalizesLineEndings(t *testing.T) {
++	want := proofDigest(ProtectedRequest{Prompt: "line1\nline2\nline3"})
++	for _, test := range []struct {
++		name string
++		req  ProtectedRequest
++		want string
++	}{
++		{"crlf", ProtectedRequest{Prompt: "line1\r\nline2\r\nline3"}, want},
++		{"cr", ProtectedRequest{Prompt: "line1\rline2\rline3"}, want},
++		{"mixed", ProtectedRequest{Prompt: "line1\r\nline2\rline3"}, want},
++		{"explicit digest", ProtectedRequest{Prompt: "ignored\r\n", Digest: "raw-digest-123"}, "raw-digest-123"},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			if got := proofDigest(test.req); got != test.want {
++				t.Fatalf("proofDigest() = %q, want %q", got, test.want)
++			}
++		})
++	}
++}
 diff --git a/internal/aistudio/request.go b/internal/aistudio/request.go
-index f71ee00..e8b3b37 100644
+index e38694a..f3bbb3d 100644
 --- a/internal/aistudio/request.go
 +++ b/internal/aistudio/request.go
-@@ -457,7 +457,7 @@ func setPartThoughtSignature(wire []any, signature string) []any {
+@@ -498,7 +498,7 @@ func setPartThoughtSignature(wire []any, signature string) []any {
  	return setWireField(wire, 14, signature)
  }
  
@@ -76,7 +97,7 @@ index f71ee00..e8b3b37 100644
  func stripThoughtSignatures(contents []Content) []Content {
  	stripped := make([]Content, 0, len(contents))
  	for _, content := range contents {
-@@ -466,6 +466,12 @@ func stripThoughtSignatures(contents []Content) []Content {
+@@ -507,6 +507,12 @@ func stripThoughtSignatures(contents []Content) []Content {
  			if !part.payload() {
  				continue
  			}
@@ -90,7 +111,7 @@ index f71ee00..e8b3b37 100644
  			if part.FunctionCall != nil {
  				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index d02d151..98cf936 100644
+index 2212420..315d843 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
 @@ -34,6 +34,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
@@ -110,15 +131,7 @@ index d02d151..98cf936 100644
  // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
  type camoufoxRuntime struct {
  	*camoufoxnative.Worker
-@@ -145,6 +155,7 @@ func (worker *NativeWorker) proofAndHeaders(ctx context.Context, binding, page s
- 	worker.operationMu.Lock()
- 	defer worker.operationMu.Unlock()
- 	worker.setPhase(WorkerBusy)
-+	binding = normalizePromptLineEndings(binding)
- 	digest := sha256.Sum256([]byte(binding))
- 	runtime := worker.current()
- 	var proof string
-@@ -260,7 +271,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
+@@ -263,7 +273,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
  	if err != nil {
  		return nil, fmt.Errorf("受保护请求缺少 WAA field %d: %w", request.ProofField, err)
  	}
@@ -128,10 +141,10 @@ index d02d151..98cf936 100644
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{Body: request.Body, ProofStart: start, ProofEnd: end, Digest: fmt.Sprintf("%x", digest)})
  	if err != nil {
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index 473c205..658209c 100644
+index e7d7cfc..ad9dbab 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -242,6 +242,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+@@ -255,6 +255,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
  	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", 3, "", AccountSelection{ModelID: request.Model}, rpc)
  }
  
@@ -231,3 +244,16 @@ index 0000000..3c5c8f9
 +		}
 +	}
 +}
+diff --git a/internal/aistudio/waa.go b/internal/aistudio/waa.go
+index 171a934..542b51b 100644
+--- a/internal/aistudio/waa.go
++++ b/internal/aistudio/waa.go
+@@ -26,7 +26,7 @@ func proofDigest(request ProtectedRequest) string {
+ 	if request.Digest != "" {
+ 		return request.Digest
+ 	}
+-	return fmt.Sprintf("%x", sha256.Sum256([]byte(request.Prompt)))
++	return fmt.Sprintf("%x", sha256.Sum256([]byte(normalizePromptLineEndings(request.Prompt))))
+ }
+ 
+ // followUp 是受保护请求发出 Delay 后以相同请求头发出的伴随请求，响应被丢弃
