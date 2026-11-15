@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index 1968964..4409ce9 100644
+index 953d6c6..5c60c05 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -771,6 +771,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
@@ -111,10 +111,10 @@ index e38694a..f3bbb3d 100644
  			if part.FunctionCall != nil {
  				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index 2212420..315d843 100644
+index 6fd7978..e9e6f49 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
-@@ -34,6 +34,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
+@@ -35,6 +35,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
  var _ ProtectedPreparer = (*NativeWorker)(nil)
  var _ ProtocolHeaderProvider = (*NativeWorker)(nil)
  
@@ -131,17 +131,17 @@ index 2212420..315d843 100644
  // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
  type camoufoxRuntime struct {
  	*camoufoxnative.Worker
-@@ -263,7 +273,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
+@@ -310,7 +320,7 @@ func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerato
  	if err != nil {
  		return nil, fmt.Errorf("受保护请求缺少 WAA field %d: %w", request.ProofField, err)
  	}
 -	digest := sha256.Sum256([]byte(request.Prompt))
 +	digest := sha256.Sum256([]byte(normalizePromptLineEndings(request.Prompt)))
+ 	result, _ := wireFunctionResult(request.Body)
  	worker.setPhase(WorkerBusy)
- 	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{Body: request.Body, ProofStart: start, ProofEnd: end, Digest: fmt.Sprintf("%x", digest)})
- 	if err != nil {
+ 	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index e7d7cfc..ad9dbab 100644
+index 0c03117..dc2d47d 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
 @@ -255,6 +255,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
@@ -245,7 +245,7 @@ index 0000000..3c5c8f9
 +	}
 +}
 diff --git a/internal/aistudio/waa.go b/internal/aistudio/waa.go
-index 171a934..542b51b 100644
+index 5d5a545..35e55ac 100644
 --- a/internal/aistudio/waa.go
 +++ b/internal/aistudio/waa.go
 @@ -26,7 +26,7 @@ func proofDigest(request ProtectedRequest) string {
