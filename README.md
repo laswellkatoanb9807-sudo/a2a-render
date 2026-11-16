@@ -1,6 +1,6 @@
 # AIStudio2API · Render 新加坡部署仓库
 
-> 现役：`v0.3.9-cloud`（2026-11-15，上游 `cd3d4ab`）。完善号池调度与排队/递增冷却/429、上游输入拒绝按各协议官方格式返回、删除 Worker 闲置休眠与后台下载出口 IP 库、SpiderMonkey 补齐页面请求与函数提交事件、指纹真实分布生成与官网试用页改进；另保留 CRLF 全链路归一化与 STRIP 下服务端工具真实签名。回滚与验收见基地方档案。
+> 现役：`v0.3.10-cloud`（2026-11-16，上游 `16a90c5`）。虚拟时钟与节奏调度、SpiderMonkey 同账户多页面并发与操作排入空闲时段、Google Gen AI SDK `/v1` 兼容与空帧心跳、403 code 7 宽容重选与 Drive token 回退修复，以及流解码/WAA/JPEG 转码性能优化；另保留 CRLF 全链路归一化与 STRIP 下服务端工具真实签名。回滚与验收见基地方档案。
 
 > 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
 
@@ -8,7 +8,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.9 + CRLF 与服务端工具签名补丁；SpiderMonkey v158.0.1 / libwebp v1.6.0 静态库走 GitHub Asset API 并校验 SHA-256 |
+| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.10 + CRLF 与服务端工具签名补丁；SpiderMonkey v158.0.1-aistudio2api.2 / libwebp v1.6.0 静态库走 GitHub Asset API 并校验 SHA-256 |
 | `entrypoint.sh` | 保证 `/var/data/{auth,runtime}` 就位 |
 | `render.yaml` | Render Blueprint：新加坡 / 1c-2G / 2GB 盘挂 `/var/data` / 全量环境变量 |
 | `patches/cloud-patches.diff` | CRLF 全链路归一化 + STRIP 下保留服务端工具真实签名（约 10KB），构建时应用并自检 |
