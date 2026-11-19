@@ -141,7 +141,7 @@ index 57594b3..0f31be6 100644
  	worker.setPhase(WorkerBusy)
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index 369a848..5c9fb3f 100644
+index 8f395a2..7acff1b 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
 @@ -250,6 +250,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
