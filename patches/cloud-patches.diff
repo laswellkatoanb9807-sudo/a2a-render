@@ -111,7 +111,7 @@ index e38694a..f3bbb3d 100644
  			if part.FunctionCall != nil {
  				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index 57594b3..0f31be6 100644
+index 779d43f..3dc9139 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
 @@ -47,6 +47,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
@@ -131,9 +131,9 @@ index 57594b3..0f31be6 100644
  // camoufoxRuntime 是 Camoufox 后端的 workerRuntime，重新载入在同一浏览器中进行
  type camoufoxRuntime struct {
  	*camoufoxnative.Worker
-@@ -362,7 +372,7 @@ func (worker *NativeWorker) SendProtected(ctx context.Context, request Protected
+@@ -364,7 +374,7 @@ func (worker *NativeWorker) SendProtected(ctx context.Context, request Protected
  
- // generate 在页面界面运行 GenerateContent，proof 绑定 request.Prompt 的 SHA-256
+ // generate 在页面界面运行 GenerateContent，proof 绑定 request.Prompt 的 SHA-256；页面发出之前以当前界面步骤报告请求阶段，发出后报告等待响应头
  func (worker *NativeWorker) generate(ctx context.Context, generator pageGenerator, request ProtectedRequest) (*RPCResponse, error) {
 -	digest := sha256.Sum256([]byte(request.Prompt))
 +	digest := sha256.Sum256([]byte(normalizePromptLineEndings(request.Prompt)))
@@ -141,10 +141,10 @@ index 57594b3..0f31be6 100644
  	worker.setPhase(WorkerBusy)
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index 8f395a2..7acff1b 100644
+index a61cd2d..f6807d8 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -250,6 +250,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+@@ -255,6 +255,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
  	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", "", AccountSelection{ModelID: request.Model}, rpc)
  }
  
