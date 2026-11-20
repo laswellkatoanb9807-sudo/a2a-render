@@ -1,26 +1,23 @@
 # AIStudio2API · Render 新加坡部署仓库
 
-> 现役：`v0.3.11-cloud`（2026-11-18，上游 `6d8ad7d`）。页面时钟超前调度与空转 GC 保留 JIT 代码、按可用账户范围并发排队、Interactions 断流/HTTP3 重试、公开错误英文脱敏与 11-16 官网入门卡片兼容，大幅降低并发 WAA 与请求处理延迟；另保留 CRLF 全链路归一化与 STRIP 下服务端工具真实签名。回滚与验收见基地方档案。
+> **现役镜像**：`v0.3.13-cloud`（上游 `c77dd89` + 云端双补丁：**CRLF 全链路归一化** + **STRIP 下保留服务端工具真实签名**）。
+> 本仓库仅放构建材料，**零密钥、零 Cookie、零二进制**；账号经管理 API 导入，落 Render 持久盘 `/var/data/auth/`。
 
-> 只放**构建材料**，不放任何密钥/账号 Cookie。账号在服务跑起来后用管理台「Cookie 导入」添加，落在 Render 持久盘 `/var/data/auth/`。
-
-## 内容
+## 文件清单
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | Node 22 前端 + Go/CGO 云端现编；上游 v0.3.11 + CRLF 与服务端工具签名补丁；SpiderMonkey v158.0.1-aistudio2api.2 / libwebp v1.6.0 静态库走 GitHub Asset API 并校验 SHA-256 |
-| `entrypoint.sh` | 保证 `/var/data/{auth,runtime}` 就位 |
-| `render.yaml` | Render Blueprint：新加坡 / 1c-2G / 2GB 盘挂 `/var/data` / 全量环境变量 |
-| `patches/cloud-patches.diff` | CRLF 全链路归一化 + STRIP 下保留服务端工具真实签名（约 10KB），构建时应用并自检 |
+| `Dockerfile` | Node 22 前端（含跨目录 `internal/i18n/messages`）+ Go 1.27 CGO 现编；SpiderMonkey `v158.0.1-aistudio2api.2` / libwebp `v1.6.0` 走 GitHub Asset API 并验 SHA-256；内置 cloudflared `2026.10.7` |
+| `entrypoint.sh` | 确保 `/var/data/{auth,runtime}` 就位并拉起容器内 cloudflared |
+| `render.yaml` | Render Blueprint：Singapore / Starter 0.5c-512MB（配 `GOMEMLIMIT=300MiB`）/ 2GB 盘挂 `/var/data` / 全量环境变量 |
+| `patches/cloud-patches.diff` | CRLF 归一化 + STRIP 服务端工具签名保留（UTF-8 LF，构建时 `git apply` + marker 自检） |
 | `verify-remote.sh` | 直连 Render 的六项验收脚本 |
+| `push-render.sh` | 经 GitHub Contents API 推送文本文件并自动对齐本地 git 指针 |
 
 ## 关键设计
 
-- **容器内出站隧道**：Render 直出 HTTPS，同时运行 cloudflared；`a2a.yu-api.com` 经 CF Tunnel 接入，Access 规则照旧生效（不要 CNAME 到 `onrender.com`，会触发 CF error 1000）。
-- **端口**：a2a 不认 `PORT`，只能用 `LISTEN_ADDR=0.0.0.0:10000`（Render 默认 PORT 也是 10000）。
-- **状态全落持久盘**：工作目录设为 `/var/data`，`.env`、`auth/`、`runtime/` 自然落在盘上，重建容器不丢账号。
-- **双账号**：`auth/` 下每个子目录 = 一个 Google 账号，`ROUTING_STRATEGY=fill-first` 打满换号；某号某模型 429 只冷却那一格，请求自动切另一个号。
+- **出站隧道接入**：CF 不能代理 CNAME 到 `onrender.com`（error 1000），故由容器内 cloudflared 拨出隧道 `a2a-render` 承接 `a2a.yu-api.com` 并保持 CF Access 保护。
+- **端口与持久盘**：a2a 不认 `PORT`，须设 `LISTEN_ADDR=0.0.0.0:10000`；工作目录 `/var/data` 跨部署保留 `.env` / `auth/` / `runtime/`。
+- **多账号调度**：三号（Camoufox 隔离会话）`ROUTING_STRATEGY=fill-first` + `WARM_WORKER_LIMIT=3`，429 冷却按 `<账号>:<通道>:<模型>` 隔离。
 
-## 运维参考
-
-基地方档案 `aistudio2api-lifecycle.md`（§5 已知坑与 §10 Render SOP）、`BUILD.md`（升级重编流程）。
+详细运维、升级与排障见基地主档案 `aistudio2api-lifecycle.md`。
