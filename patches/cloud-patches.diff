@@ -1,5 +1,5 @@
 diff --git a/internal/aistudio/generate.go b/internal/aistudio/generate.go
-index cf5e61a..55dfd2d 100644
+index 50a64ca..d790e2f 100644
 --- a/internal/aistudio/generate.go
 +++ b/internal/aistudio/generate.go
 @@ -781,6 +781,9 @@ func validateGenerateEntry(request GenerateRequest, entry modelEntry) error {
@@ -111,7 +111,7 @@ index e38694a..f3bbb3d 100644
  			if part.FunctionCall != nil {
  				call := *part.FunctionCall
 diff --git a/internal/aistudio/runtime_native.go b/internal/aistudio/runtime_native.go
-index 4ae9374..7fe994d 100644
+index a9d4702..3527ec6 100644
 --- a/internal/aistudio/runtime_native.go
 +++ b/internal/aistudio/runtime_native.go
 @@ -47,6 +47,16 @@ var ErrProtectedTransport = errors.New("受保护请求网络错误")
@@ -141,10 +141,10 @@ index 4ae9374..7fe994d 100644
  	worker.setPhase(WorkerBusy)
  	response, err := generator.Generate(ctx, camoufoxnative.GenerateTurn{
 diff --git a/internal/aistudio/service.go b/internal/aistudio/service.go
-index 62395f0..6c203cb 100644
+index 4adef0a..c0da8a3 100644
 --- a/internal/aistudio/service.go
 +++ b/internal/aistudio/service.go
-@@ -275,6 +275,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
+@@ -354,6 +354,21 @@ func (t *WorkerProtectedTransport) DoProtectedTitle(ctx context.Context, request
  	return t.doPrepared(ctx, request.Prompt+" "+request.Answer, "", "", AccountSelection{ModelID: request.Model}, rpc)
  }
  
